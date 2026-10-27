@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemeVault Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fafafa; --panel: #ffffff; --line: #e4e4e7; --text: #18181b; --muted: #52525b; --faint: #71717a;
+  --code-bg: #f4f4f5; --accent: #2563eb;
+  --high: #b91c1c; --high-bg: #fef2f2; --med: #b45309; --med-bg: #fffbeb; --low: #1d4ed8; --low-bg: #eff6ff;
+  --info: #52525b; --info-bg: #f4f4f5; --ok: #15803d; --ok-bg: #f0fdf4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #09090b; --panel: #0f0f12; --line: #27272a; --text: #e4e4e7; --muted: #a1a1aa; --faint: #71717a;
+    --code-bg: #18181b; --accent: #60a5fa;
+    --high: #f87171; --high-bg: #2a1215; --med: #fbbf24; --med-bg: #271d0b; --low: #93c5fd; --low-bg: #0f1a2e;
+    --info: #a1a1aa; --info-bg: #18181b; --ok: #4ade80; --ok-bg: #0d2216;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #09090b; --panel: #0f0f12; --line: #27272a; --text: #e4e4e7; --muted: #a1a1aa; --faint: #71717a;
+  --code-bg: #18181b; --accent: #60a5fa;
+  --high: #f87171; --high-bg: #2a1215; --med: #fbbf24; --med-bg: #271d0b; --low: #93c5fd; --low-bg: #0f1a2e;
+  --info: #a1a1aa; --info-bg: #18181b; --ok: #4ade80; --ok-bg: #0d2216;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 Inter, system-ui, sans-serif; }
+code, pre, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.86em; }
+code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 16px 80px; }
+header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+h1 { font-size: 24px; margin: 0 0 6px; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 18px; font-weight: 600; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; }
+p { margin: 8px 0; }
+.meta { color: var(--muted); font-size: 13px; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+button { font: 500 13px Inter, sans-serif; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 6px 10px; cursor: pointer; min-height: 32px; }
+button:hover { border-color: var(--faint); }
+button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; margin-top: 14px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.stat { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; padding: 12px 14px; }
+.stat .n { font: 600 24px "JetBrains Mono", monospace; }
+.stat .l { color: var(--muted); font-size: 12px; }
+.panel { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; padding: 14px 16px; }
+.verdict { border-left: 3px solid var(--high); }
+.sev { display: inline-block; font: 500 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap; }
+.sev.high { color: var(--high); background: var(--high-bg); }
+.sev.med { color: var(--med); background: var(--med-bg); }
+.sev.low { color: var(--low); background: var(--low-bg); }
+.sev.info { color: var(--info); background: var(--info-bg); }
+.sev.ok { color: var(--ok); background: var(--ok-bg); }
+.ver { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ver.checked { color: var(--ok); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; color: var(--muted); font-size: 12px; background: var(--code-bg); }
+tr:last-child td { border-bottom: 0; }
+.finding { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; margin: 10px 0; }
+.finding summary { list-style: none; cursor: pointer; padding: 11px 14px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.finding summary::-webkit-details-marker { display: none; }
+.finding summary .id { font: 500 12px "JetBrains Mono", monospace; color: var(--faint); min-width: 34px; }
+.finding summary .t { font-weight: 500; flex: 1 1 320px; }
+.finding .body { padding: 0 14px 12px; border-top: 1px solid var(--line); }
+.finding .body dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 14px; margin: 12px 0 0; }
+.finding .body dt { color: var(--muted); font-size: 12.5px; }
+.finding .body dd { margin: 0; }
+@media (max-width: 640px) { .finding .body dl { grid-template-columns: 1fr; } .finding .body dt { margin-top: 6px; } }
+.code { position: relative; margin: 10px 0; }
+.code pre { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; overflow-x: auto; line-height: 1.5; }
+.code button { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 3px 8px; min-height: 0; }
+ul { padding-left: 20px; margin: 8px 0; } li { margin: 3px 0; }
+.small { font-size: 13px; color: var(--muted); }
+.hidden { display: none !important; }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 8px 14px; font-size: 13px; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>MemeVault: báo cáo audit mã nguồn</h1>
+  <div class="meta">Ngày 2026-10-27 · Phiên bản audit <code>0.1.18</code> (versionCode 19) · Phạm vi: toàn bộ <code>app/</code>, <code>tools/</code>, <code>docs/</code>, <code>.agents/</code>, khoảng 13.460 dòng Kotlin/Python/Shell</div>
+  <div class="toolbar">
+    <button type="button" id="themeBtn">Đổi giao diện sáng/tối</button>
+    <button type="button" id="expandBtn">Mở tất cả phát hiện</button>
+  </div>
+  <nav class="toc">
+    <a href="#tomtat">1. Tóm tắt</a><a href="#bangchung">2. Bằng chứng</a><a href="#kientruc">3. Kiến trúc</a>
+    <a href="#phathien">4. Phát hiện</a><a href="#gate">5. Gate MVP</a><a href="#lotrinh">6. Lộ trình sửa</a>
+    <a href="#tot">7. Điểm làm tốt</a><a href="#phuluc">8. Phụ lục</a>
+  </nav>
+</header>
+
+<section id="tomtat">
+  <h2>1. Tóm tắt</h2>
+  <div class="panel verdict">
+    <p><strong>Kết luận:</strong> codebase có nền tảng tốt hơn mức thường gặp ở một MVP: FileProvider khoá chặt, có giới hạn kích thước khi nhập, ghi file atomic, migration Room khớp schema, IME kiểm tra MIME trước khi gọi <code>commitContent()</code>. Build, lint và test đều xanh.</p>
+    <p><strong>Chưa nên coi là bản dùng hằng ngày</strong> khi còn 3 lỗi mức Cao:</p>
+    <ul>
+      <li><strong>H1:</strong> cơ chế reconcile lúc khởi động có thể <strong>xoá vĩnh viễn toàn bộ thư viện</strong> nếu đường dẫn tuyệt đối đã lưu trong DB không khớp thư mục hiện tại.</li>
+      <li><strong>H2:</strong> chia sẻ/copy chạy I/O và truy vấn Room trên main thread. Riêng nút Copy dựng <code>ClipData</code> qua <code>getType()</code> của chính provider, lời gọi này chạy Room trên main thread và bị Room chặn, nên clip có thể <strong>mất MIME ảnh</strong>.</li>
+      <li><strong>H3:</strong> dự án không có version control. 18 bản APK đã phát hành nhưng không có lịch sử diff và không có điểm rollback mã nguồn.</li>
+    </ul>
+  </div>
+  <div class="grid" style="margin-top:12px">
+    <div class="stat"><div class="n" style="color:var(--high)">3</div><div class="l">Cao</div></div>
+    <div class="stat"><div class="n" style="color:var(--med)">15</div><div class="l">Trung bình</div></div>
+    <div class="stat"><div class="n" style="color:var(--low)">14</div><div class="l">Thấp</div></div>
+    <div class="stat"><div class="n" style="color:var(--info)">8</div><div class="l">Thông tin / nợ kỹ thuật</div></div>
+    <div class="stat"><div class="n" style="color:var(--ok)">46 + 22</div><div class="l">Unit test Kotlin + Python, tất cả pass</div></div>
+    <div class="stat"><div class="n">0 / 43</div><div class="l">Lint error / warning</div></div>
+  </div>
+</section>
+
+<section id="bangchung">
+  <h2>2. Phương pháp và bằng chứng</h2>
+  <h3>Đã chạy thực tế (2026-10-27, JDK 17.0.19, Gradle 8.14, AGP 8.11.1)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Lệnh</th><th>Kết quả</th><th>Ghi chú</th></tr>
+    <tr><td><code>./gradlew :app:testDebugUnitTest --rerun</code></td><td><span class="sev ok">PASS</span></td><td>46 test / 14 class, 0 failure. Chạy lại với <code>--rerun</code> để không dùng kết quả cache.</td></tr>
+    <tr><td><code>./gradlew :app:lintDebug</code></td><td><span class="sev ok">0 error</span></td><td>43 warning (xem Phụ lục). Task lint lấy từ cache Gradle (UP-TO-DATE) vì mã nguồn không đổi.</td></tr>
+    <tr><td><code>./gradlew :app:assembleDebug</code></td><td><span class="sev ok">BUILD SUCCESSFUL</span></td><td>Có 1 cảnh báo deprecation: <code>kotlinOptions.jvmTarget</code>.</td></tr>
+    <tr><td><code>python3 -m unittest test_zalo_desktop_bridge test_zalo_android_bridge</code></td><td><span class="sev ok">PASS</span></td><td>22 test trong <code>tools/</code>.</td></tr>
+    <tr><td><code>shasum -a 256 -c app/release/*.sha256</code></td><td><span class="sev ok">khớp</span></td><td>15/15 APK có checksum đều khớp. 2 file <code>.sha256</code> ghi kèm tiền tố <code>app/release/</code> nên phải chạy từ thư mục gốc (không phải lỗi hỏng). Bản 0.1.8 không có checksum.</td></tr>
+  </table></div>
+  <h3>Chưa kiểm chứng</h3>
+  <ul>
+    <li><code>connectedAndroidTest</code> (migration test, provider test, test GIF→WebP): chưa chạy vì không có emulator/thiết bị trong phiên này.</li>
+    <li>Không có bằng chứng thiết bị thật cho Messenger, Zalo, TikTok, Gboard/OEM, xoay màn hình hay bàn phím ảo. Mọi kết luận về hành vi UI/IME trong báo cáo đều từ việc <em>đọc mã</em>.</li>
+    <li><code>assembleRelease</code> chưa chạy (cần keystore cá nhân; keystore đã có tại <code>~/.config/memevault/</code>).</li>
+  </ul>
+  <h3>Cách rà soát</h3>
+  <p>Rà theo 3 mảng chạy song song: (a) bảo mật và interop, (b) data layer và đồng thời, (c) UI, IME và xử lý media. Mọi phát hiện mức Cao và phần lớn mức Trung bình đã được đối chiếu lại trực tiếp với mã nguồn. Cột xác minh của từng phát hiện ghi rõ:</p>
+  <ul>
+    <li><span class="ver checked">Đã đối chiếu</span>: đã đọc lại dòng mã được trích dẫn.</li>
+    <li><span class="ver">Theo rà soát</span>: phát hiện từ lượt rà soát mảng tương ứng, chưa đọc lại từng dòng.</li>
+    <li><em>Cần thiết bị</em>: cơ chế đúng trong mã, nhưng hệ quả cuối cùng cần chạy trên máy để xác nhận.</li>
+  </ul>
+</section>
+
+<section id="kientruc">
+  <h2>3. Bức tranh kiến trúc</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Lớp</th><th>Thành phần chính</th><th>Nhận xét</th></tr>
+    <tr><td>Entry point</td><td><code>MainActivity</code> (1.413 dòng), <code>StickerStudioActivity</code> (1.666), <code>AssetPickerActivity</code>, <code>ZaloSyncActivity</code>, <code>ShareReceiverActivity</code>, <code>MemeKeyboardService</code></td><td>Platform Views dựng bằng code, không có XML layout và không có ViewModel. Hai Activity lớn trộn lẫn UI, state machine, I/O và dialog.</td></tr>
+    <tr><td>Domain/policy</td><td><code>MediaPolicy</code>, <code>HostShareCanvasPolicy</code>, <code>IosStickerCanvasPolicy</code>, <code>AnimatedWebpPolicy</code>, <code>TagNormalizer</code></td><td>Thuần Kotlin, có unit test. Đây là phần được kiểm thử tốt nhất.</td></tr>
+    <tr><td>Data</td><td><code>AssetRepository</code> (1.032), <code>AssetDatabase</code> (Room v3, 821 dòng), <code>StudioDraftStore</code>, <code>MaskCodec</code></td><td>Một khoá RW toàn cục <code>STORAGE_LOCK</code>. Mỗi component tự tạo <code>AssetRepository</code> riêng, kéo theo Room instance riêng và một lần reconcile riêng.</td></tr>
+    <tr><td>Media</td><td><code>GifToMp4Converter</code>, <code>GifToAnimatedWebpConverter</code>, <code>AnimatedWebpMuxer</code>, <code>BackgroundRemoval</code> (ML Kit beta), <code>MediaPreviewLoader</code></td><td>Muxer WebP đúng spec. GIF→MP4 dùng API surface không phù hợp (M1).</td></tr>
+    <tr><td>Interop</td><td><code>AssetFileProvider</code>, <code>ShareManager</code>, <code>IntentMediaExtractor</code>, <code>TenorMediaDownloader</code>, <code>ZaloSyncManager</code> (SAF)</td><td>Provider an toàn. Đầu vào share import còn lỏng (M2 đến M5).</td></tr>
+    <tr><td>Công cụ ngoài app</td><td><code>tools/zalo_desktop_bridge.py</code>, <code>tools/zalo_android_bridge.py</code>, script emulator/signing</td><td>Có cơ chế opt-in <code>--apply --yes</code> và có test.</td></tr>
+  </table></div>
+</section>
+
+<section id="phathien">
+  <h2>4. Phát hiện</h2>
+  <div class="toolbar" id="filters">
+    <button type="button" data-f="all" aria-pressed="true">Tất cả</button>
+    <button type="button" data-f="high" aria-pressed="false">Cao</button>
+    <button type="button" data-f="med" aria-pressed="false">Trung bình</button>
+    <button type="button" data-f="low" aria-pressed="false">Thấp</button>
+    <button type="button" data-f="info" aria-pressed="false">Thông tin</button>
+  </div>
+
+  <h3>Mức Cao</h3>
+
+  <details class="finding" data-sev="high" open>
+    <summary><span class="id">H1</span><span class="sev high">Cao</span><span class="t">Reconcile khởi động có thể xoá vĩnh viễn toàn bộ thư viện</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>AssetDatabase.kt:622-634</code>, <code>AssetRepository.kt:734-744</code>, đường dẫn lưu tuyệt đối tại <code>AssetRepository.kt:289, 609</code></dd>
+      <dt>Lỗi</dt><dd><code>originalPath = target.absolutePath</code>. <code>removeMissingOriginalRows</code> xoá cứng mọi row có đường dẫn không nằm dưới root hiện tại, và <strong>mọi exception đều bị tính là "missing"</strong> (<code>.getOrDefault(false)</code>). Ngay sau đó, mọi file trong <code>originals/</code> không còn row tham chiếu sẽ bị <code>File::delete</code>.</dd>
+      <dt>Kịch bản</dt><dd>Restore backup/device-transfer sang user hoặc work profile khác, hoặc khi đường dẫn <code>filesDir</code> thay đổi. Mọi row bị coi là mất, nên tag, recipe và favorite bị xoá theo cascade, rồi toàn bộ file gốc vừa restore cũng bị xoá. Không có ngưỡng an toàn, không có vùng cách ly và không có log. Reconcile chạy lại mỗi khi tạo <code>AssetRepository</code>, tức 7 lần trở lên mỗi process.</dd>
+      <dt>Khắc phục</dt><dd>Lưu đường dẫn tương đối (hoặc chỉ lưu <code>id</code> + phần mở rộng) và resolve lúc chạy. Huỷ reconcile khi tỷ lệ row "missing" vượt ngưỡng (ví dụ trên 20% hoặc trên N row). Chuyển file mồ côi vào <code>quarantine/</code> có TTL thay vì xoá ngay. Viết test cho reconcile.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="high" open>
+    <summary><span class="id">H2</span><span class="sev high">Cao</span><span class="t">Chia sẻ/copy chạy storage và Room trên main thread; Copy có thể mất MIME ảnh</span><span class="ver checked">Đã đối chiếu · Cần thiết bị</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>ShareManager.kt:65, 123-128</code> (gọi từ click tại <code>MainActivity.kt:606/610/746/750</code>, <code>StickerStudioActivity.kt:1067/1074</code>); <code>MemeKeyboardService.kt:385</code> (main thread của IME); <code>AssetFileProvider.kt:21</code> → <code>AssetRepository.originalFile</code> → <code>AssetDatabase.findById</code></dd>
+      <dt>Lỗi</dt><dd>
+        <ul>
+          <li><code>sharedAsset()</code> gọi <code>awaitReconciliation()</code>, có thể chờ tới 15 giây, sau đó lấy read lock của <code>STORAGE_LOCK</code>. Toàn bộ việc này chạy trên UI thread và trên main thread của IME.</li>
+          <li><code>ClipData.newUri(contentResolver, …)</code> gọi <code>getType()</code> của chính provider ngay trong cùng process và cùng thread, rồi chạm tới <code>dao.findById</code>. Room builder không bật <code>allowMainThreadQueries()</code> (<code>AssetDatabase.kt:466-472</code>), nên Room ném <code>IllegalStateException</code>. <code>ContentResolver.getType</code> nuốt exception này và trả <code>null</code>.</li>
+        </ul>
+      </dd>
+      <dt>Kịch bản</dt><dd>
+        <ul>
+          <li><strong>Copy:</strong> clip có thể chỉ mang <code>text/uri-list</code> thay vì <code>image/*</code>, nên Messenger/Zalo không nhận ra đó là ảnh khi dán.</li>
+          <li><strong>Bàn phím:</strong> mở bàn phím MemeVault (lúc này đang chạy một reconcile mới) rồi chạm ngay vào một PNG. Main thread của IME bị chặn, bàn phím treo, và có thể dẫn tới ANR khi thư viện lớn.</li>
+        </ul>
+      </dd>
+      <dt>Khắc phục</dt><dd>Đưa toàn bộ <code>sharedAsset</code>/<code>copy</code> sang executor nền. Dựng clip bằng MIME đã biết thay vì để resolver tra:
+        <div class="code"><button type="button" class="copy">Copy</button><pre>val clip = ClipData(
+    ClipDescription(shared.displayName, arrayOf(shared.mimeType)),
+    ClipData.Item(shared.uri),
+)
+clipboard.setPrimaryClip(clip)</pre></div>
+        Thêm instrumented test xác nhận <code>clip.description.hasMimeType("image/*")</code>.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="high" open>
+    <summary><span class="id">H3</span><span class="sev high">Cao</span><span class="t">Không có version control; 18 bản phát hành không có lịch sử mã nguồn</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd>Thư mục gốc dự án (không có <code>.git/</code>); <code>app/release/</code> chứa 16 APK, tổng 79 MB</dd>
+      <dt>Lỗi</dt><dd>Không có lịch sử diff, không có tag theo phiên bản và không có CI. <code>CHANGELOG.md</code> là nguồn truy vết duy nhất. <code>.gitignore</code> đã có sẵn nhưng chưa từng được dùng.</dd>
+      <dt>Kịch bản</dt><dd>Một bản 0.1.x gây mất dữ liệu (xem H1) thì không thể bisect, không dựng lại được đúng source của APK đang cài, và không rollback mã được. Go/No-Go §6 yêu cầu "build từ checkout sạch" nhưng hiện chưa có "checkout" nào.</dd>
+      <dt>Khắc phục</dt><dd>
+        <div class="code"><button type="button" class="copy">Copy</button><pre>cd /Users/ryantruong/Project/Orther/MemeVault
+git init &amp;&amp; git add -A &amp;&amp; git commit -m "Baseline 0.1.18"
+git tag v0.1.18</pre></div>
+        Kiểm tra <code>git status</code> trước khi commit: <code>.gradle/</code>, <code>.kotlin/</code>, <code>build/</code>, <code>app/release/</code> và <code>__pycache__/</code> đều đã nằm trong <code>.gitignore</code>, nhưng nên thêm <code>.kotlin/</code> và <code>.DS_Store</code>.</dd>
+    </dl></div>
+  </details>
+
+  <h3>Mức Trung bình</h3>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M1</span><span class="sev med">TB</span><span class="t">GIF→MP4 vẽ vào input surface của MediaCodec bằng <code>lockCanvas</code></span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>GifToMp4Converter.kt:119</code>; các lỗi đi kèm ở <code>:58-59</code> (encoder bị rò khi constructor <code>MediaMuxer</code> ném lỗi), <code>:105/110</code> (đánh dấu <code>completed</code> trước <code>muxer.stop()</code>), <code>:158</code> (không bỏ qua buffer <code>CODEC_CONFIG</code>)</dd>
+      <dt>Lỗi</dt><dd>Tài liệu <code>MediaCodec.createInputSurface</code> yêu cầu render bằng API tăng tốc phần cứng; <code>lockCanvas</code> "may fail or produce unexpected results". Ngoài ra, nếu <code>stop()</code> lỗi thì MP4 thiếu moov atom vẫn bị coi là thành công.</dd>
+      <dt>Kịch bản</dt><dd>Trên một số encoder, video TikTok bị lỗi, sai timestamp hoặc có frame rác, nhưng vẫn được đem đi chia sẻ.</dd>
+      <dt>Khắc phục</dt><dd>Vẽ frame <code>Movie</code> vào <code>Bitmap</code> phần mềm, rồi <code>drawBitmap</code> lên <code>lockHardwareCanvas()</code> (có từ API 23). Tính <code>completed</code> sau khi <code>stop()</code> thành công. Bỏ qua buffer có <code>BUFFER_FLAG_CODEC_CONFIG</code>. Đưa encoder vào khối <code>try</code>.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M2</span><span class="sev med">TB</span><span class="t">Share receiver chấp nhận URI mọi scheme/authority (confused deputy)</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>IntentMediaExtractor.kt:8-27</code>, <code>AssetRepository.kt:93-114</code>; <code>MainActivity</code> (exported) cũng xử lý <code>ACTION_SEND</code> và chạy lại mỗi lần <code>onCreate</code>, kể cả khi recreate</dd>
+      <dt>Lỗi</dt><dd>Không chặn <code>file://</code> và không loại trừ authority <code>${applicationId}.fileprovider</code> của chính app. Một explicit intent bỏ qua được intent-filter <code>image/*</code>.</dd>
+      <dt>Kịch bản</dt><dd>App độc gửi <code>EXTRA_STREAM=file:///data/user/0/com.memevault.app/files/media/variants/…png</code> hoặc một URI trong thư mục SAF Zalo đã được cấp quyền. MemeVault đọc bằng quyền của chính nó và nhập file vào thư viện. Phạm vi bị giới hạn ở file có tên ảnh vì MIME suy theo đuôi, nên không có rò rỉ trực tiếp. Riêng <code>MainActivity</code> còn nhập lại cùng media sau mỗi lần xoay màn hình.</dd>
+      <dt>Khắc phục</dt><dd>Chỉ nhận <code>uri.scheme == "content"</code> và từ chối authority của chính app. Bỏ nhánh SEND trong <code>MainActivity</code>, hoặc chỉ xử lý khi <code>savedInstanceState == null</code>. Bọc <code>getParcelable*Extra</code> trong try/catch (<code>BadParcelableException</code>).</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M3</span><span class="sev med">TB</span><span class="t">MIME khi nhập được tin theo nhãn, không kiểm magic bytes</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>AssetRepository.kt:96-104</code>, cùng <code>readDimensions</code> (không giới hạn kích thước ảnh)</dd>
+      <dt>Lỗi</dt><dd>MIME do sender khai báo, hoặc suy từ đuôi file, quyết định cả loại asset lẫn đuôi file lưu trữ. Điều này trái với quy tắc "MIME explicit" trong <code>CLAUDE.md</code>. Riêng đường Tenor đã có sniff magic bytes (<code>TenorMediaDownloader.kt:282-302</code>).</dd>
+      <dt>Kịch bản</dt><dd>JPEG gắn nhãn <code>image/png</code> sẽ được lưu là <code>.png</code>, và provider quảng cáo <code>image/png</code> cho Zalo/Messenger trong khi trả về byte JPEG. PNG gắn nhãn <code>image/gif</code> sẽ thành <code>AssetType.GIF</code> rồi bị đưa vào bộ chuyển GIF→MP4/WebP.</dd>
+      <dt>Khắc phục</dt><dd>Tái sử dụng hàm sniff của Tenor cho mọi đường nhập. Khi nhãn và byte không khớp thì lấy MIME theo byte. Giới hạn số pixel tối đa.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M4</span><span class="sev med">TB</span><span class="t">Tên hiển thị do sender kiểm soát được lưu thô và chuyển tiếp cho app khác</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>AssetRepository.kt:95, 611</code> → <code>AssetFileProvider.kt:40-55</code> (<code>DISPLAY_NAME</code>), <code>ShareManager.kt:128, 142-143</code> (<code>EXTRA_TITLE</code>, nhãn ClipData)</dd>
+      <dt>Lỗi</dt><dd>Không bỏ <code>/</code>, <code>\</code>, NUL và không giới hạn độ dài. Mẫu xử lý đúng đã có sẵn: <code>TenorMediaDownloader.safeDisplayName</code> (dòng 304-315).</dd>
+      <dt>Kịch bản</dt><dd>Sender trả về <code>_display_name="../../shared_prefs/x.xml.png"</code> hoặc một chuỗi dài 10 KB. App nhận (Zalo/Messenger) nào dựng đường dẫn từ <code>DISPLAY_NAME</code> sẽ nhận một tên dạng path traversal do MemeVault chuyển tiếp ("dirty stream").</dd>
+      <dt>Khắc phục</dt><dd>Áp dụng <code>safeDisplayName</code> chung cho mọi đường nhập, và thêm một lớp nữa khi provider trả <code>DISPLAY_NAME</code>.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M5</span><span class="sev med">TB</span><span class="t">Share import không có timeout/cancel; provider bị treo sẽ chặn cả hàng đợi</span><span class="ver">Theo rà soát</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>MediaUtils.kt:36</code>, <code>AssetRepository.kt:110-113</code>, <code>ShareImportJobCoordinator.kt:29</code> (single-thread executor)</dd>
+      <dt>Kịch bản</dt><dd>Provider của sender trả về một pipe không bao giờ ghi và không bao giờ đóng. Thread <code>MemeVault-share-import</code> bị chặn suốt vòng đời process, mọi lần share sau đều phải xếp hàng sau nó, và màn hình nhận share hiện "đang tải" mãi.</dd>
+      <dt>Khắc phục</dt><dd>Dùng <code>CancellationSignal</code> cho query và <code>openTypedAssetFileDescriptor</code>, cộng với watchdog timeout cho mỗi item. Cho phép người dùng huỷ.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M6</span><span class="sev med">TB</span><span class="t">Mỗi component tự tạo <code>AssetRepository</code>; reconcile chạy lại dưới global write lock</span><span class="ver">Theo rà soát · một phần đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>AssetRepository.kt:26-50</code>. Các nơi khởi tạo: <code>AssetFileProvider:17</code>, <code>MainActivity:65</code>, <code>MemeKeyboardService:55</code>, <code>AssetPickerActivity:55</code>, <code>StickerStudioActivity:108</code>, <code>ZaloSyncActivity:45</code>, <code>ShareImportJobCoordinator:46</code></dd>
+      <dt>Lỗi</dt><dd>
+        <ul>
+          <li>Mỗi instance mở một Room DB riêng trên <code>memevault.db</code> và quét lại toàn bộ cây thư mục dưới write lock.</li>
+          <li>Thao tác import tính SHA-256 của file tới 50 MB và đọc metadata trong lúc giữ write lock.</li>
+          <li>Nếu reconcile ném lỗi, <code>Future</code> giữ lại exception đó, nên instance ấy hỏng vĩnh viễn và không có retry.</li>
+        </ul>
+      </dd>
+      <dt>Kịch bản</dt><dd>Mở bàn phím khiến <code>openFile</code>/<code>getType</code> của provider (cần read lock) bị chặn trong suốt lượt quét, nên app đích chờ khi dán meme. Mọi caller đều bỏ cuộc sau 15 giây với lỗi "Storage reconciliation quá thời gian".</dd>
+      <dt>Khắc phục</dt><dd>Tạo một <code>AssetRepository</code> singleton ở phạm vi process (ví dụ qua <code>Application</code>) và chỉ reconcile một lần. Hash và probe file staging <em>trước</em> khi lấy lock. Cho phép retry khi reconcile thất bại.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M7</span><span class="sev med">TB</span><span class="t">Chuẩn hoá tag legacy chạy lại ở mỗi instance và không idempotent</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>AssetDatabase.kt:474-476, 641-648</code>; <code>MediaModels.kt:201</code> (<code>.removePrefix("#")</code> chỉ bỏ một ký tự <code>#</code>)</dd>
+      <dt>Kịch bản</dt><dd>Cờ <code>legacyTagsNormalized</code> chỉ nằm trong bộ nhớ, nên mỗi lần khởi tạo lại xoá rồi chèn lại toàn bộ đồ thị tag. Tag "##meme" lần đầu thành <code>#meme</code>, lần khởi động sau thành <code>meme</code> và âm thầm gộp vào tag <code>meme</code> có sẵn. Về sau, nếu siết quy tắc chuẩn hoá (ví dụ giảm <code>MAX_TAG_LENGTH</code>), các tag không còn hợp lệ sẽ bị xoá ngay khi khởi động.</dd>
+      <dt>Khắc phục</dt><dd>Lưu cờ chuẩn hoá vào DB (trong bảng meta, hoặc chuyển thành một migration v3→v4). Dùng <code>trimStart('#')</code>. Thêm test idempotent: chạy chuẩn hoá hai lần phải cho cùng kết quả.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M8</span><span class="sev med">TB</span><span class="t">Auto Backup gồm cả <code>media/originals</code>, dễ vượt quota 25 MB</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>res/xml/backup_rules.xml</code>, <code>res/xml/data_extraction_rules.xml</code></dd>
+      <dt>Lỗi</dt><dd>Cloud Auto Backup của Android có quota 25 MB mỗi app. Khi dữ liệu vượt quota, bản backup mới không được tạo (<code>onQuotaExceeded</code>) và <strong>cả DB cũng không được backup</strong>. README lại khẳng định "Database, originals và mask được đưa vào … Auto Backup".</dd>
+      <dt>Kịch bản</dt><dd>Thư viện vài chục GIF đã vượt 25 MB. Từ đó cloud backup âm thầm ngừng, người dùng tin là có backup, nhưng khi đổi máy (không qua device-transfer) thì mất hết. Kết hợp với H1, ngay cả restore thành công cũng có rủi ro.</dd>
+      <dt>Khắc phục</dt><dd>Chỉ đưa DB và mask vào cloud backup, để originals ở <code>device-transfer</code>. Thêm chức năng "Xuất/Nhập backup" thủ công (zip qua SAF), vốn đã có trong <code>ui-redesign-plan.md</code>. Ghi rõ giới hạn này trong UI và README.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M9</span><span class="sev med">TB</span><span class="t">IME: chiều cao không ổn định, fullscreen ngang không tắt, picker có thể không quay về app chat</span><span class="ver checked">Đã đối chiếu · Cần thiết bị</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>MemeKeyboardService.kt:58-67, 178-182</code> (root không có chiều cao cố định); không override <code>onEvaluateFullscreenMode</code>; <code>:294-297</code> mở <code>AssetPickerActivity</code> với <code>FLAG_ACTIVITY_NEW_TASK</code>, trong khi manifest không có <code>taskAffinity</code></dd>
+      <dt>Kịch bản</dt><dd>
+        <ul>
+          <li>Trạng thái đang tải và trạng thái đã tải cao khác nhau, nên khung soạn tin của app chat nhảy mỗi lần mở bàn phím.</li>
+          <li>Ở chế độ ngang, bàn phím chuyển sang fullscreen kèm ô extract text và che mất cuộc chat.</li>
+          <li>Nếu task MemeVault đang có trong Recents, picker gia nhập task đó. Bấm "quay lại" khi ấy về <code>MainActivity</code> thay vì về app chat.</li>
+        </ul>
+      </dd>
+      <dt>Khắc phục</dt><dd>Cố định chiều cao bàn phím (ví dụ khoảng 260dp, hoặc theo tỷ lệ màn hình). Override <code>onEvaluateFullscreenMode() = false</code>. Đặt <code>android:taskAffinity=""</code> và <code>excludeFromRecents</code> cho picker.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M10</span><span class="sev med">TB</span><span class="t">Executor đơn luồng của IME dùng chung cho load asset và chuyển đổi GIF</span><span class="ver">Theo rà soát</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>MemeKeyboardService.kt:37, 97, 342</code>; <code>GifToMp4Converter.kt:87</code> (<code>Thread.sleep</code> sau mỗi frame, tức chuyển đổi chạy theo thời gian thực, tối đa 60 giây); timeout fallback của WebP được tính lại từ đầu, nên tệ nhất khoảng 90 giây</dd>
+      <dt>Kịch bản</dt><dd>Người dùng gửi một GIF 30 giây sang TikTok rồi mở lại bàn phím. Bàn phím đứng ở "Đang tải" khoảng 30 giây.</dd>
+      <dt>Khắc phục</dt><dd>Tách executor cho I/O nhẹ và cho chuyển đổi nặng. Bỏ <code>sleep</code> và dùng timestamp tổng hợp (<code>presentationTimeUs</code>) thay vì đồng hồ thực.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M11</span><span class="sev med">TB</span><span class="t">Pipeline preview bị thrash: cache 4 MB và decode không huỷ được</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>MediaPreviewLoader.kt:18</code> (<code>LruCache(4 * 1024)</code> KB); <code>MainActivity.kt:1385</code> yêu cầu <code>dp(220)</code>, khoảng 1,7 MB mỗi ô ở xxhdpi; view tag chỉ được kiểm tra sau khi decode xong</dd>
+      <dt>Kịch bản</dt><dd>Cache chỉ chứa được 2 đến 4 ô, trong khi keyboard, picker và library dùng chung một singleton. Khi cuộn nhanh, decode của các item đã ra khỏi màn hình vẫn xếp hàng chạy, và cuộn ngược lại thì phải decode lại.</dd>
+      <dt>Khắc phục</dt><dd>Đặt cache theo <code>ActivityManager.memoryClass / 8</code>, decode đúng kích thước ô (khoảng 120 đến 220dp), dùng <code>RGB_565</code> hoặc <code>HARDWARE</code> cho ảnh không có alpha, huỷ <code>Future</code> khi view bị recycle.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M12</span><span class="sev med">TB</span><span class="t">Tải Tenor/Giphy chạy trên executor của DB, không có deadline tổng, huỷ dialog không huỷ tải</span><span class="ver">Theo rà soát</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>MainActivity.kt:951</code> (<code>submitDbOperation</code>), <code>TenorMediaDownloader.kt:240-241</code> (<code>readTimeout</code> 30 giây tính cho mỗi lần đọc)</dd>
+      <dt>Kịch bản</dt><dd>Một CDN trả dữ liệu nhỏ giọt có thể giữ kết nối tới khi đủ 50 MB. Trong thời gian đó, favorite, refresh và <code>touchUsed</code> phải xếp hàng sau lượt tải. Đóng dialog thì lượt tải vẫn tiếp tục và vẫn nhập vào thư viện.</dd>
+      <dt>Khắc phục</dt><dd>Dùng executor mạng riêng, đặt deadline tổng (ví dụ 60 giây) và cho huỷ được qua cờ hoặc <code>Future.cancel</code>. Redirect cần kiểm tra cả port và <code>userInfo</code> như URL đầu tiên.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M13</span><span class="sev med">TB</span><span class="t">Theme bị ghi đè hoàn toàn trên API 27+</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>res/values-v27/styles.xml</code>, <code>res/values-night-v27/styles.xml</code></dd>
+      <dt>Lỗi</dt><dd>Hai file này khai báo lại <code>Theme.MemeVault</code> chỉ với <code>windowLightNavigationBar</code>. Android không merge style giữa các qualifier, nên trên gần như mọi thiết bị (API 27 trở lên) các thuộc tính <code>colorAccent</code>, <code>textColorPrimary</code>, <code>fontFamily</code> và <code>windowLightStatusBar</code> trong <code>values/</code> đều bị bỏ qua. Status bar được xử lý bằng code nên không bị ảnh hưởng.</dd>
+      <dt>Kịch bản</dt><dd>AlertDialog, EditText và SeekBar dùng màu Material tối mặc định, kể cả khi đang ở chế độ sáng.</dd>
+      <dt>Khắc phục</dt><dd>Tạo <code>Base.Theme.MemeVault</code> trong <code>values/</code>, để <code>Theme.MemeVault</code> kế thừa nó, và ở <code>-v27</code> chỉ override đúng một item.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M14</span><span class="sev med">TB</span><span class="t">Đổi cấu hình làm mất trạng thái; edge-to-edge thiếu inset IME</span><span class="ver">Theo rà soát</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd>View dựng bằng code không có ID, nên RecyclerView/ScrollView không tự khôi phục vị trí. Dialog không được dismiss trong <code>onDestroy</code> (<code>MainActivity.kt:712/982</code>, <code>StickerStudioActivity.kt:821/1446</code>). <code>StickerStudioActivity.kt:1564+</code> chỉ pad theo <code>systemBars()</code>, không pad theo <code>ime()</code>.</dd>
+      <dt>Kịch bản</dt><dd>Xoay máy trong lúc đang tách nền thì mất kết quả (<code>shutdownNow</code>) và log WindowLeaked. Bàn phím ảo che ô nhập tag ở cuối Studio.</dd>
+      <dt>Khắc phục</dt><dd>Gán <code>View.generateViewId()</code> hoặc ID cố định cho các container cuộn. Dismiss dialog trong <code>onDestroy</code>. Cộng <code>WindowInsets.Type.ime()</code> vào padding.</dd>
+    </dl></div>
+  </details>
+
+  <details class="finding" data-sev="med">
+    <summary><span class="id">M15</span><span class="sev med">TB</span><span class="t">Tài liệu và hợp đồng dự án lệch so với mã</span><span class="ver checked">Đã đối chiếu</span></summary>
+    <div class="body"><dl>
+      <dt>Vị trí</dt><dd><code>docs/production-roadmap.md:52-54, 88</code>; <code>.agents/PROJECT_CONTEXT.md</code> (mục Out of scope); <code>AndroidManifest.xml:4</code></dd>
+      <dt>Lỗi</dt><dd>
+        <ul>
+          <li>Roadmap ghi "backup đang exclude file/DB" và "Debug APK 0.1.5", nhưng mã hiện tại đã backup cả DB và originals, và bản mới nhất là 0.1.18.</li>
+          <li><code>PROJECT_CONTEXT.md</code> xếp "Automated scraping of meme/GIF sites" vào ngoài phạm vi và khẳng định app local-first, nhưng app đã có quyền <code>INTERNET</code> và trình tải trang Tenor/Giphy. Hợp đồng không nhắc tới điều này.</li>
+        </ul>
+      </dd>
+      <dt>Ảnh hưởng</dt><dd>Agent hoặc người đọc tài liệu sẽ ra quyết định dựa trên trạng thái sai. Đây là trôi lệch hợp đồng, không phải bug runtime.</dd>
+      <dt>Khắc phục</dt><dd>Cập nhật bảng "Khoảng cách hiện tại". Ghi quyết định về nhập qua mạng vào <code>PROJECT_CONTEXT.md</code>: chỉ tải theo link người dùng dán, host allowlist, không crawl.</dd>
+    </dl></div>
+  </details>
+
+  <h3>Mức Thấp</h3>
+  <div class="table-wrap" data-sev="low"><table>
+    <tr><th>ID</th><th>Vị trí</th><th>Vấn đề và kịch bản</th><th>Xác minh</th></tr>
+    <tr><td class="mono">L1</td><td><code>AssetDatabase.kt:478-488, 565-575</code></td><td>Lỗi ghi DB bị nuốt bằng <code>runCatching{…}.getOrDefault(false)</code>, nên không phân biệt được "không tìm thấy" với "lỗi DB". Ở <code>createStickerLocked</code>, <code>mergeTags(...) ?: existing</code> làm mất tag người dùng vừa nhập nhưng vẫn báo thành công.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L2</td><td><code>AssetRepository.kt:576-581</code></td><td>Row sticker từ v1 có <code>dedup_key</code> bằng hash thô, nên một lần import meme có cùng byte sẽ trả về sticker cũ kèm <code>duplicate=true</code>.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L3</td><td><code>AssetRepository.kt:1015-1016</code></td><td>Variant <code>opaque_share</code>/<code>_v2</code> cũ không bao giờ được dọn: mỗi asset từng share có thể để lại một PNG 2048px.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L4</td><td><code>AssetDatabase.kt:193-194</code>, <code>:525-527</code></td><td><code>lower()</code>/<code>LIKE</code> của SQLite chỉ fold chữ ASCII, nên "MÈO" có thể không khớp "mèo". <code>list()</code> có N+1 truy vấn tag, không phân trang, và gọi <code>canonicalPath</code> 2 lần mỗi row.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L5</td><td><code>ZaloSyncManager.kt:161-168, 498-500</code></td><td>Một số provider SAF tự nối <code>.png</code> vào tên <code>.memevault-&lt;id&gt;.part</code>. File staging khi đó không còn được nhận diện, và nếu process chết giữa chừng thì lần sync sau sẽ nhập nó thành sticker trùng.</td><td class="ver">Theo rà soát · Cần thiết bị</td></tr>
+    <tr><td class="mono">L6</td><td><code>ZaloSyncManager.kt:32-55, 212-216</code></td><td>Không gọi <code>releasePersistableUriPermission</code> cho tree cũ khi chọn lại thư mục (số grant có giới hạn). Stream <code>input</code> bị rò nếu <code>openOutputStream</code> trả null. 9 lần <code>SharedPreferences.commit()</code>.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L7</td><td><code>MemeKeyboardService.kt:303-307</code></td><td>Kiểm tra password chỉ xét bit variation, không xét input class. <code>TYPE_NUMBER_VARIATION_PASSWORD</code> (0x10) trùng giá trị với <code>TYPE_TEXT_VARIATION_URI</code>, nên ô URL của trình duyệt bị ẩn media. Lỗi này nghiêng về phía an toàn, chỉ ảnh hưởng UX.</td><td class="ver checked">Đã đối chiếu</td></tr>
+    <tr><td class="mono">L8</td><td><code>MainActivity.kt:1195-1203</code></td><td>Các thao tác ghi đang xếp hàng (favorite, xoá, <code>touchUsed</code>) bị bỏ khi Activity bị huỷ. <code>AssetPickerActivity</code> thì drain hàng đợi, nên hai chỗ xử lý không nhất quán.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L9</td><td><code>StickerStudioActivity.kt:80, 542, 895, 1035</code></td><td><code>operationGeneration</code>, <code>sourceMissing</code> và <code>engine</code> được chia sẻ giữa các thread mà không có <code>@Volatile</code>. <code>saveSticker</code> đọc <code>cropRect</code> đang thay đổi trên worker.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L10</td><td><code>MainActivity.kt:1248</code>, <code>MemeKeyboardService.kt:529</code></td><td>Stable ID lấy từ <code>String.hashCode()</code>. Khi va chạm hash, RecyclerView bind sai item.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L11</td><td><code>ShareReceiverActivity.kt:45-47</code></td><td>Mở <code>MainActivity</code> mà không có <code>NEW_TASK</code>, nên UI MemeVault bị chèn vào back stack của app gửi (ví dụ Zalo).</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L12</td><td>Nhiều file UI</td><td>Khoảng 50 chuỗi tiếng Việt hardcode, kể cả <code>contentDescription</code>. <code>error.message</code> thô được hiện cho người dùng. Touch target nhỏ hơn 48dp: chip tag 36dp, filter picker 42dp, handle crop 44dp.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L13</td><td><code>tools/setup_personal_signing.sh:28-29</code></td><td>Mật khẩu keystore truyền qua argv (<code>-storepass "$pw"</code>), nên các process khác của cùng user đọc được qua <code>ps</code> trong lúc chạy. Nên dùng <code>-storepass:env</code>.</td><td class="ver">Theo rà soát</td></tr>
+    <tr><td class="mono">L14</td><td><code>CheckerboardDrawable.kt:30, 43</code></td><td><code>setAlpha</code> không có tác dụng vì mỗi ô bị gán lại màu opaque.</td><td class="ver">Theo rà soát</td></tr>
+  </table></div>
+
+  <h3>Thông tin / nợ kỹ thuật</h3>
+  <div class="table-wrap" data-sev="info"><table>
+    <tr><th>ID</th><th>Nội dung</th></tr>
+    <tr><td class="mono">I1</td><td>God class: <code>MainActivity</code> (1.413 dòng) và <code>StickerStudioActivity</code> (1.666). <code>configureSystemBars</code>/<code>applySystemBarInsets</code> bị chép 3 lần, adapter preview 3 lần, dialog gợi ý tag 2 lần. Điều kiện "nguồn đã xoá" được viết khác nhau giữa các Activity.</td></tr>
+    <tr><td class="mono">I2</td><td>Build: <code>kapt</code> thay vì KSP. <code>kotlinOptions.jvmTarget</code> đã deprecated. Room 2.7.2 đã có 2.8.4. Gradle 8.14 đã có 8.14.5. <code>isMinifyEnabled = false</code> cho release (APK lớn hơn, nhưng chấp nhận được với bản cá nhân).</td></tr>
+    <tr><td class="mono">I3</td><td>Không có CI. <code>.kotlin/errors/</code> còn 5 log "Daemon compilation failed" cũ. <code>app/release/</code> nặng 79 MB với 16 APK, trong đó nhiều bản trung gian không còn cần.</td></tr>
+    <tr><td class="mono">I4</td><td><code>zalo_android_bridge.py</code>: tham số <code>adb shell</code> đi qua <code>sh</code> trên thiết bị. Hiện an toàn nhờ <code>REMOTE_PATH_RE</code> và tên file dạng hex/UUID, nhưng <code>remote_child</code> sẽ thành điểm injection nếu sau này được dùng lại với tên từ nguồn khác. Lệnh <code>sync</code> ghi local (pull) trước khi kiểm tra <code>--apply --yes</code>.</td></tr>
+    <tr><td class="mono">I5</td><td>Zalo sync đẩy <em>toàn bộ</em> sticker local ra thư mục dùng chung (theo thiết kế). Nên ghi rõ trên UI rằng đây là ranh giới dữ liệu.</td></tr>
+    <tr><td class="mono">I6</td><td>IME không override <code>onFinishInput</code>/<code>onFinishInputView</code>. Kết quả của session cũ bị bỏ âm thầm, nên người dùng thấy "Đang chuẩn bị…" rồi không có gì xảy ra.</td></tr>
+    <tr><td class="mono">I7</td><td>Mã hoá AVC: kích thước chỉ được làm chẵn, không căn bội 16, nên một số encoder có thể từ chối.</td></tr>
+    <tr><td class="mono">I8</td><td>Mask lưu với định dạng tên là "gray8-png" nhưng thực tế <code>Bitmap.compress</code> ghi PNG RGB/RGBA. <code>dedupKey</code> phụ thuộc encoder PNG của hệ điều hành.</td></tr>
+  </table></div>
+</section>
+
+<section id="gate">
+  <h2>5. Ánh xạ vào gate của dự án</h2>
+  <p class="small">Đối chiếu với <code>.agents/checklists/mvp.md</code> và Go/No-Go §6 trong <code>docs/production-roadmap.md</code>. Hiện mọi ô trong hai checklist này vẫn chưa được tick.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Gate</th><th>Trạng thái theo audit</th><th>Phát hiện chặn</th></tr>
+    <tr><td>Original bytes được giữ nguyên; xoá đúng asset</td><td><span class="sev high">Bị chặn</span></td><td>H1 (reconcile có thể xoá cả thư viện), M8</td></tr>
+    <tr><td>Room migration + backup/reinstall được kiểm chứng</td><td><span class="sev high">Bị chặn</span></td><td>H1, M8, M7. androidTest chưa chạy trong audit này.</td></tr>
+    <tr><td>Signed release, version/changelog/checksum; build từ checkout sạch</td><td><span class="sev high">Bị chặn</span></td><td>H3 (không có VCS). Keystore và checksum đã có.</td></tr>
+    <tr><td>Import idempotent theo hash</td><td><span class="sev med">Gần đạt</span></td><td>L2 (dedup namespace sticker v1). Lock toàn cục chống race là tốt.</td></tr>
+    <tr><td>MIME được suy ra và kiểm tra nhất quán</td><td><span class="sev med">Chưa đạt</span></td><td>M3, M4</td></tr>
+    <tr><td><code>content://</code>, grant tạm thời và least-privilege</td><td><span class="sev ok">Đạt (theo mã)</span></td><td>Provider chỉ đọc, không exported, có grant flag. Còn thiếu instrumented test cho grant.</td></tr>
+    <tr><td>Có fallback Copy và Sharesheet</td><td><span class="sev med">Rủi ro</span></td><td>H2 (clip có thể mất MIME)</td></tr>
+    <tr><td>Keyboard chỉ <code>commitContent()</code> với MIME được quảng cáo</td><td><span class="sev ok">Đạt (theo mã)</span></td><td>Cần bằng chứng thiết bị</td></tr>
+    <tr><td>Preview không chặn cuộn grid</td><td><span class="sev med">Rủi ro</span></td><td>M11</td></tr>
+    <tr><td>GIF→MP4 có giới hạn và có trạng thái lỗi hiển thị được</td><td><span class="sev med">Một phần</span></td><td>Có giới hạn; M1 và M10 vẫn mở</td></tr>
+    <tr><td>Không có secret hoặc media trong log</td><td><span class="sev ok">Đạt</span></td><td>App không có lời gọi <code>Log.*</code> nào. Còn L13 ở script.</td></tr>
+    <tr><td>Bằng chứng host app (Messenger/Zalo/TikTok)</td><td><span class="sev info">Chưa có</span></td><td>Nằm ngoài phạm vi đọc mã</td></tr>
+  </table></div>
+</section>
+
+<section id="lotrinh">
+  <h2>6. Lộ trình khắc phục đề xuất</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Ưu tiên</th><th>Việc</th><th>Phát hiện</th><th>Ước lượng</th></tr>
+    <tr><td><span class="sev high">P0</span></td><td><code>git init</code> + commit baseline + tag <code>v0.1.18</code></td><td>H3</td><td>15 phút</td></tr>
+    <tr><td><span class="sev high">P0</span></td><td>Reconcile an toàn: đường dẫn tương đối (migration v4), ngưỡng huỷ, quarantine, test</td><td>H1, M7</td><td>1–2 ngày</td></tr>
+    <tr><td><span class="sev high">P0</span></td><td>Đưa share/copy ra khỏi main thread; dựng <code>ClipData</code> với MIME tường minh; test clip MIME</td><td>H2</td><td>0,5 ngày</td></tr>
+    <tr><td><span class="sev high">P0</span></td><td>Quyết định chính sách backup (bỏ originals khỏi cloud backup, thêm export thủ công) và cập nhật README</td><td>M8</td><td>0,5 ngày (chưa tính export)</td></tr>
+    <tr><td><span class="sev med">P1</span></td><td>Siết share import: chỉ nhận <code>content://</code>, chặn authority của chính app, sniff MIME, làm sạch tên, timeout/cancel</td><td>M2–M5</td><td>1 ngày</td></tr>
+    <tr><td><span class="sev med">P1</span></td><td><code>AssetRepository</code> singleton ở phạm vi process; reconcile một lần; hash ngoài lock</td><td>M6</td><td>1 ngày</td></tr>
+    <tr><td><span class="sev med">P1</span></td><td>IME: chiều cao cố định, tắt fullscreen, taskAffinity cho picker, tách executor</td><td>M9, M10, I6</td><td>1 ngày</td></tr>
+    <tr><td><span class="sev med">P1</span></td><td>GIF→MP4 qua <code>lockHardwareCanvas</code>, sửa thứ tự <code>stop()</code>/release; bỏ <code>sleep</code></td><td>M1, M10</td><td>0,5–1 ngày + thử trên thiết bị</td></tr>
+    <tr><td><span class="sev med">P1</span></td><td>Sửa theme v27, preview cache/huỷ decode, executor riêng cho Tenor, inset IME, giữ trạng thái khi xoay</td><td>M11–M14</td><td>1,5 ngày</td></tr>
+    <tr><td><span class="sev low">P2</span></td><td>Cập nhật roadmap và PROJECT_CONTEXT; dọn <code>app/release/</code> và <code>.kotlin/errors</code></td><td>M15, I3</td><td>1–2 giờ</td></tr>
+    <tr><td><span class="sev low">P2</span></td><td>Các lỗi mức Thấp L1–L14; chuyển chuỗi sang <code>strings.xml</code>; touch target ≥ 48dp</td><td>L1–L14</td><td>2–3 ngày</td></tr>
+    <tr><td><span class="sev low">P2</span></td><td>Tách god class (mỗi màn hình một controller/state holder); KSP; Room 2.8; CI chạy test + lint</td><td>I1, I2</td><td>3–5 ngày</td></tr>
+  </table></div>
+  <h3>Test cần bổ sung (theo thứ tự giá trị)</h3>
+  <ul>
+    <li>Reconcile: row có file mất, root lệch hoặc exception <strong>không được</strong> xoá thư viện; quét file mồ côi; TTL của staging.</li>
+    <li>Repository: import trùng hai lần, import đồng thời từ 2 instance, namespace dedup giữa sticker và meme, xoá có dọn file và cascade, rollback <code>createSticker</code>.</li>
+    <li><code>normalizeLegacyTags</code> idempotent (gồm trường hợp <code>##</code> và tag chuẩn hoá thành null).</li>
+    <li><code>MaskCodec</code> round-trip, <code>StudioDraftStore</code> save/load/cleanup, <code>ShareImportJobCoordinator</code>.</li>
+    <li>Instrumented: MIME của clip khi Copy, grant URI qua Sharesheet, migration 1→2 tách riêng.</li>
+  </ul>
+  <div class="code"><button type="button" class="copy">Copy</button><pre>cd /Users/ryantruong/Project/Orther/MemeVault
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+./gradlew :app:connectedDebugAndroidTest   # cần emulator: tools/start_emulator.sh</pre></div>
+</section>
+
+<section id="tot">
+  <h2>7. Điểm làm tốt</h2>
+  <ul>
+    <li><strong>FileProvider khoá chặt:</strong> chỉ đọc (<code>AssetFileProvider.kt:24</code>), không exported, ID phải đúng dạng UUID, profile được kiểm theo <code>SAFE_PROFILE</code>, và canonical parent phải bằng thư mục variant (<code>AssetRepository.kt:510-525</code>). Không tìm thấy path traversal.</li>
+    <li><strong>Tenor/Giphy:</strong> tự xử lý redirect và kiểm tra lại HTTPS cùng host allowlist ở mỗi bước, tối đa 5 redirect, giới hạn trang 1 MB và media 50 MB, có sniff magic bytes.</li>
+    <li><strong>Ghi file an toàn khi crash:</strong> promote file trước rồi mới insert DB, xoá file đích nếu insert lỗi. Khi xoá thì xoá row trước rồi mới xoá file. Variant được tạo trong staging rồi commit atomic.</li>
+    <li><strong>Migration Room 1→2→3</strong> khớp với schema JSON đã export, không dùng <code>fallbackToDestructiveMigration</code>, và có instrumented migration test.</li>
+    <li><strong>IME:</strong> <code>commitContent</code> có <code>INPUT_CONTENT_GRANT_READ_URI_PERMISSION</code>, thương lượng MIME theo <code>contentMimeTypes</code> (có wildcard), loại kết quả cũ theo generation/package/fieldId, ô password bị chặn ở mọi đường, và nút đổi bàn phím có fallback theo từng mức API.</li>
+    <li><strong>Animated WebP muxer</strong> đúng spec RIFF/VP8X/ANIM/ANMF, có padding cho chunk lẻ.</li>
+    <li><strong>Decode có giới hạn:</strong> <code>inSampleSize</code>/<code>setTargetSampleSize</code>, Studio giới hạn 2048 và xoay theo EXIF.</li>
+    <li><strong>Công cụ bridge</strong> mặc định ở chế độ dry-run, cần <code>--apply --yes</code> mới ghi, publish bằng <code>os.link</code> nên không ghi đè, dùng <code>O_NOFOLLOW</code> cho lock, và có 22 test.</li>
+    <li><strong>Tài liệu ranh giới sản phẩm rõ ràng:</strong> không hứa hẹn "native sticker" với Zalo/Messenger/TikTok.</li>
+  </ul>
+</section>
+
+<section id="phuluc">
+  <h2>8. Phụ lục</h2>
+  <h3>Lint (0 error, 43 warning)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Rule</th><th>Số lượng</th><th>Ghi chú</th></tr>
+    <tr><td><code>UseKtx</code></td><td>19</td><td>Chỉ là style</td></tr>
+    <tr><td><code>ApplySharedPref</code></td><td>9</td><td>Tất cả trong <code>ZaloSyncManager.kt:341-401</code></td></tr>
+    <tr><td><code>SetTextI18n</code></td><td>6</td><td><code>MainActivity:117/1183</code>, <code>AssetPickerActivity:90/408</code>, <code>StickerStudioActivity:1496</code>, <code>UiComponents:119</code></td></tr>
+    <tr><td><code>GradleDependency</code> / <code>AndroidGradlePluginVersion</code></td><td>6</td><td>Room 2.8.4, androidx.test 1.7.0/1.3.0, Gradle 8.14.5</td></tr>
+    <tr><td><code>KaptUsageInsteadOfKsp</code>, <code>NotifyDataSetChanged</code>, <code>PluralsCandidate</code></td><td>3</td><td>Xem I2; <code>ZaloSyncActivity:77</code></td></tr>
+  </table></div>
+  <p class="small">Báo cáo lint đầy đủ: <code>app/build/reports/lint-results-debug.html</code></p>
+  <h3>Môi trường</h3>
+  <p class="small">compileSdk/targetSdk 36, minSdk 26; Kotlin 2.2.20; AGP 8.11.1; Room 2.7.2; ML Kit subject segmentation 16.0.0-beta1; Java/Kotlin target 17.</p>
+</section>
+
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+(function () {
+  var root = document.documentElement;
+  try { var t = localStorage.getItem('mv-audit-theme'); if (t) root.setAttribute('data-theme', t); } catch (e) {}
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    var dark = root.getAttribute('data-theme') ? root.getAttribute('data-theme') === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var next = dark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('mv-audit-theme', next); } catch (e) {}
+  });
+  var expanded = false;
+  document.getElementById('expandBtn').addEventListener('click', function () {
+    expanded = !expanded;
+    document.querySelectorAll('details.finding').forEach(function (d) { d.open = expanded; });
+    this.textContent = expanded ? 'Thu gọn tất cả' : 'Mở tất cả phát hiện';
+  });
+  var toast = document.getElementById('toast');
+  function showToast(msg) { toast.textContent = msg; toast.classList.add('show'); setTimeout(function () { toast.classList.remove('show'); }, 1400); }
+  document.querySelectorAll('button.copy').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var text = b.parentElement.querySelector('pre').innerText;
+      var done = function () { showToast('Đã copy'); };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () { showToast('Không copy được'); });
+      else showToast('Trình duyệt không hỗ trợ clipboard');
+    });
+  });
+  var filters = document.querySelectorAll('#filters button');
+  filters.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var f = b.getAttribute('data-f');
+      filters.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      document.querySelectorAll('#phathien [data-sev]').forEach(function (el) {
+        el.classList.toggle('hidden', f !== 'all' && el.getAttribute('data-sev') !== f);
+      });
+      document.querySelectorAll('#phathien h3').forEach(function (h) { h.classList.toggle('hidden', f !== 'all'); });
+    });
+  });
+})();
+</script>
+</body>
+</html>

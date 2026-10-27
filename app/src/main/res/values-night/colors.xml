@@ -1,0 +1,22 @@
+<resources>
+    <color name="mv_paper">#171513</color>
+    <color name="mv_paper_deep">#282420</color>
+    <color name="mv_surface">#302B27</color>
+    <color name="mv_ink">#FFF8ED</color>
+    <color name="mv_muted">#BDB3A6</color>
+    <color name="mv_line">#4A423B</color>
+    <color name="mv_orange">#FF7D55</color>
+    <color name="mv_orange_dark">#FFB19A</color>
+    <color name="mv_orange_content">#241F1A</color>
+    <color name="mv_purple">#9A86F2</color>
+    <color name="mv_purple_dark">#D2C9FF</color>
+    <color name="mv_tag_surface">#40366A</color>
+    <color name="mv_lime">#B8EF65</color>
+    <color name="mv_sky">#70CEF2</color>
+    <color name="mv_warning_surface">#493A1D</color>
+    <color name="mv_warning_ink">#FFE3A0</color>
+    <color name="mv_error">#FFB4A3</color>
+    <color name="mv_blue">#9A86F2</color>
+    <color name="mv_blue_dark">#D2C9FF</color>
+    <color name="mv_text">#FFF8ED</color>
+</resources>

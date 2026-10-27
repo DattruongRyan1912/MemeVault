@@ -1,0 +1,10 @@
+<resources>
+    <plurals name="asset_count">
+        <item quantity="one">1 asset</item>
+        <item quantity="other">%1$d assets</item>
+    </plurals>
+    <plurals name="importing_media">
+        <item quantity="one">Đang lưu 1 media…</item>
+        <item quantity="other">Đang lưu %1$d media…</item>
+    </plurals>
+</resources>

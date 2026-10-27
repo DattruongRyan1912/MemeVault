@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.MemeVault" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/mv_blue</item>
+        <item name="android:colorControlActivated">@color/mv_blue_dark</item>
+        <item name="android:navigationBarColor">@color/mv_surface</item>
+        <item name="android:statusBarColor">@color/mv_surface</item>
+        <item name="android:textColorPrimary">@color/mv_text</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>
