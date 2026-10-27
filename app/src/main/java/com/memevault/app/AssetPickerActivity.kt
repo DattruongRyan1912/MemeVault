@@ -75,7 +75,7 @@ class AssetPickerActivity : Activity() {
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(mvPaper)
+            setBackgroundColor(mvBackground)
             setPadding(0, dp(8), 0, dp(18))
         }
         applySystemBarInsets(root)
@@ -84,27 +84,18 @@ class AssetPickerActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(mvIconButton("‹", getString(R.string.back), { finish() }),
+        header.addView(mvIconButton(R.drawable.ic_arrow_back, getString(R.string.back), { finish() }),
             LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(TextView(this).apply {
-            text = "MV"
-            gravity = Gravity.CENTER
-            textSize = 11f
-            includeFontPadding = false
-            setTextColor(mvInk)
-            rotation = -4f
-            background = roundedBackground(mvOrange, radiusDp = 12)
-        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(4); marginEnd = dp(6) })
-        header.addView(TextView(this).apply {
             text = getString(R.string.sticker_picker_title)
-            applyMvTextStyle(21f, Color.rgb(23, 32, 51), 1)
+            applyMvTextStyle(21f, context.mvText, 1)
             setPadding(dp(10), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         root.addView(header)
 
         root.addView(TextView(this).apply {
             text = getString(R.string.sticker_picker_subtitle)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 3)
+            applyMvTextStyle(12f, context.mvMuted, 3)
             setPadding(dp(58), 0, 0, dp(8))
         })
 
@@ -112,10 +103,10 @@ class AssetPickerActivity : Activity() {
             hint = getString(R.string.sticker_picker_search_hint)
             setSingleLine(true)
             textSize = 15f
-            setTextColor(mvInk)
+            setTextColor(mvText)
             setHintTextColor(mvMuted)
             setPadding(dp(14), 0, dp(14), 0)
-            background = roundedBackground(mvSurface, radiusDp = 18, strokeColor = mvLine)
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
             contentDescription = getString(R.string.sticker_picker_search_content_description)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -147,7 +138,7 @@ class AssetPickerActivity : Activity() {
         ))
         filterRow.addView(TextView(this).apply {
             text = getString(R.string.sticker_picker_filter_hint)
-            applyMvTextStyle(11f, Color.rgb(91, 101, 124), 2)
+            applyMvTextStyle(11f, context.mvMuted, 2)
             setPadding(dp(10), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, dp(42), 1f))
         root.addView(filterRow, LinearLayout.LayoutParams(
@@ -157,7 +148,7 @@ class AssetPickerActivity : Activity() {
         updateStickerFilterButton()
 
         status = TextView(this).apply {
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 2)
+            applyMvTextStyle(12f, context.mvMuted, 2)
             setPadding(dp(2), dp(4), 0, dp(6))
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
@@ -261,11 +252,11 @@ class AssetPickerActivity : Activity() {
             getString(R.string.sticker_picker_filter_off)
         }
         stickerFilterButton.background = roundedBackground(
-            if (stickerOnly) mvColor(R.color.mv_tag_surface) else mvSurface,
-            radiusDp = 15,
-            strokeColor = if (stickerOnly) mvPurple else mvLine,
+            if (stickerOnly) mvColor(R.color.mv_accent_soft) else mvSurface,
+            radiusDp = 6,
+            strokeColor = if (stickerOnly) mvAccent else mvLine,
         )
-        stickerFilterButton.setTextColor(if (stickerOnly) mvPurpleDark else mvInk)
+        stickerFilterButton.setTextColor(if (stickerOnly) mvAccentText else mvText)
         stickerFilterButton.contentDescription = if (stickerOnly) {
             getString(R.string.sticker_picker_filter_on_content_description)
         } else {
@@ -344,8 +335,8 @@ class AssetPickerActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             run {
-                window.statusBarColor = mvPaper
-                window.navigationBarColor = mvPaper
+                window.statusBarColor = mvBackground
+                window.navigationBarColor = mvBackground
                 window.decorView.systemUiVisibility = if (night) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
             }
         }
@@ -414,7 +405,7 @@ class AssetPickerActivity : Activity() {
             val card = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(context.dp(8), context.dp(8), context.dp(8), context.dp(8))
-                background = context.roundedBackground(context.mvSurface, radiusDp = 20, strokeColor = context.mvLine)
+                background = context.roundedBackground(context.mvSurface, radiusDp = 6, strokeColor = context.mvLine)
                 isClickable = true
                 isFocusable = true
                 layoutParams = RecyclerView.LayoutParams(
@@ -424,14 +415,14 @@ class AssetPickerActivity : Activity() {
             }
             val preview = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(context.mvPaperDeep)
+                setBackgroundColor(context.mvSurfaceAlt)
             }
             card.addView(preview, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 context.dp(150),
             ))
             val label = TextView(context).apply {
-                applyMvTextStyle(13f, Color.rgb(23, 32, 51), 1)
+                applyMvTextStyle(13f, context.mvText, 1)
                 setPadding(0, context.dp(8), 0, 0)
             }
             card.addView(label)
@@ -460,7 +451,7 @@ class AssetPickerActivity : Activity() {
                 preview.background = if (asset.type == AssetType.STICKER) {
                     CheckerboardDrawable(context.dp(10), context)
                 } else {
-                    context.roundedBackground(context.mvPaperDeep, radiusDp = 14)
+                    context.roundedBackground(context.mvSurfaceAlt, radiusDp = 6)
                 }
                 previewExecutor.execute {
                     val bitmap = MediaPreviewLoader.decode(File(asset.originalPath), asset.mimeType, context.dp(240))

@@ -135,6 +135,13 @@ and record their own MIME type, path, size, and generation profile.
   never assumes access to Zalo's private sandbox. If Android cannot expose the target folder, the
   screen reports the block and the ADB bridge remains the Mac-only fallback.
 
+- Library management v2 (0.1.19): zinc design tokens, media-first grid with adaptive density,
+  type/tag collections, multi-select bulk favorite/tag/delete with an 8-second undo window,
+  full-screen detail (rename, inline tags, technical info) and library statistics. Third-party
+  host exports (TikTok/Zalo/animated sticker) are grouped under "Xuất nâng cao (thử nghiệm)".
+  The Tenor/Giphy link importer (user-pasted URLs only, host allowlist, no crawling) is the only
+  network path and requires the `INTERNET` permission.
+
 ## Planned next direction
 
 `docs/system-design-plan.md` defines the target Sticker Studio, replaceable on-device background

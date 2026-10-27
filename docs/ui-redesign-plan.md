@@ -36,6 +36,12 @@ và Sticker Studio), nhưng UI hiện còn thiên về proof-of-concept:
 
 ## 3. Design system v1
 
+> **Đã thay thế bởi design system v2 (2026-10-27, bản 0.1.19).** Token hiện hành nằm trong
+> `app/src/main/res/values*/colors.xml` và `UiComponents.kt`: zinc trung tính sáng/tối, viền 1px,
+> bo góc 6dp (control/card) và 4dp (chip/badge), không pill/FAB tròn, metadata monospace, icon
+> vector. Các giá trị radius 12/16/20dp và palette cam/tím bên dưới chỉ còn giá trị lịch sử.
+> Nghiên cứu hành vi và bằng chứng emulator: `docs/library-ux-research-2026-10-27.html`.
+
 ### Token đề xuất
 
 | Nhóm | Giá trị/qui ước |

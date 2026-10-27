@@ -58,7 +58,7 @@ class MemeKeyboardService : InputMethodService() {
     override fun onCreateInputView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(mvPaper)
+            setBackgroundColor(mvBackground)
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         inputRoot = root
@@ -86,7 +86,7 @@ class MemeKeyboardService : InputMethodService() {
         addKeyboardToolbar(root)
         root.addView(TextView(this).apply {
             text = getString(R.string.keyboard_loading)
-            applyMvTextStyle(13f, Color.rgb(91, 101, 124), 2)
+            applyMvTextStyle(13f, context.mvMuted, 2)
             gravity = Gravity.CENTER
             setPadding(dp(8), dp(14), dp(8), dp(14))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -111,7 +111,7 @@ class MemeKeyboardService : InputMethodService() {
         if (sensitiveEditor) {
             root.addView(TextView(this).apply {
                 text = getString(R.string.keyboard_sensitive_note)
-                applyMvTextStyle(13f, Color.rgb(91, 101, 124), 2)
+                applyMvTextStyle(13f, context.mvMuted, 2)
                 gravity = Gravity.CENTER
                 setPadding(dp(16), dp(20), dp(16), dp(20))
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -120,7 +120,7 @@ class MemeKeyboardService : InputMethodService() {
 
         root.addView(TextView(this).apply {
             text = getString(R.string.keyboard_search_unavailable)
-            applyMvTextStyle(11f, Color.rgb(91, 101, 124), 2)
+            applyMvTextStyle(11f, context.mvMuted, 2)
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), 0, dp(4), 0)
         }, LinearLayout.LayoutParams(
@@ -139,7 +139,7 @@ class MemeKeyboardService : InputMethodService() {
             TextView(this).apply {
                 text = tab.label
                 gravity = Gravity.CENTER
-                applyMvTextStyle(12f, Color.rgb(35, 48, 75), 1)
+                applyMvTextStyle(12f, context.mvText, 1)
                 isClickable = true
                 isFocusable = true
                 setPadding(dp(14), 0, dp(14), 0)
@@ -182,7 +182,7 @@ class MemeKeyboardService : InputMethodService() {
         ))
         root.addView(TextView(this).apply {
             text = getString(R.string.keyboard_fallback_note)
-            applyMvTextStyle(11f, Color.rgb(91, 101, 124), 2)
+            applyMvTextStyle(11f, context.mvMuted, 2)
             gravity = Gravity.CENTER
             setPadding(dp(4), dp(4), dp(4), 0)
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)))
@@ -196,7 +196,7 @@ class MemeKeyboardService : InputMethodService() {
         }
         toolbar.addView(TextView(this).apply {
             text = getString(R.string.keyboard_name)
-            applyMvTextStyle(13f, Color.rgb(23, 32, 51), 1)
+            applyMvTextStyle(13f, context.mvText, 1)
             gravity = Gravity.CENTER_VERTICAL
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         if (!sensitiveEditor) {
@@ -227,11 +227,11 @@ class MemeKeyboardService : InputMethodService() {
         tabViews.forEach { (tab, view) ->
             val selected = tab == activeTab
             view.background = roundedBackground(
-                if (selected) mvColor(R.color.mv_tag_surface) else mvSurface,
-                radiusDp = 17,
-                strokeColor = if (selected) mvPurple else mvLine,
+                if (selected) mvColor(R.color.mv_accent_soft) else mvSurface,
+                radiusDp = 6,
+                strokeColor = if (selected) mvAccent else mvLine,
             )
-            view.setTextColor(if (selected) mvPurpleDark else mvInk)
+            view.setTextColor(if (selected) mvAccentText else mvText)
             view.contentDescription = if (selected) "Đang chọn ${tab.label}" else "Lọc ${tab.label}"
         }
     }
@@ -508,7 +508,7 @@ class MemeKeyboardService : InputMethodService() {
 
     private enum class KeyboardTab(val label: String) {
         RECENT("Gần đây"),
-        FAVORITES("★ Yêu thích"),
+        FAVORITES("Yêu thích"),
         STICKERS("Sticker"),
         ANIMATED("Động"),
         ALL("Tất cả"),
@@ -533,7 +533,7 @@ class MemeKeyboardService : InputMethodService() {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 setPadding(context.dp(3), context.dp(3), context.dp(3), context.dp(3))
-                background = context.roundedBackground(context.mvSurface, radiusDp = 15, strokeColor = context.mvLine)
+                background = context.roundedBackground(context.mvSurface, radiusDp = 6, strokeColor = context.mvLine)
                 isClickable = true
                 isFocusable = true
                 layoutParams = RecyclerView.LayoutParams(
@@ -545,14 +545,14 @@ class MemeKeyboardService : InputMethodService() {
             }
             val image = android.widget.ImageView(context).apply {
                 scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setBackgroundColor(context.mvPaperDeep)
+                setBackgroundColor(context.mvSurfaceAlt)
             }
             tile.addView(image, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 context.dp(62),
             ))
             val label = TextView(context).apply {
-                applyMvTextStyle(10f, Color.rgb(35, 48, 75), 1)
+                applyMvTextStyle(10f, context.mvText, 1)
                 gravity = Gravity.CENTER
                 setPadding(context.dp(2), context.dp(3), context.dp(2), 0)
             }
@@ -593,7 +593,7 @@ class MemeKeyboardService : InputMethodService() {
                 image.background = if (asset.type == AssetType.STICKER) {
                     CheckerboardDrawable(context.dp(7), context)
                 } else {
-                    context.roundedBackground(context.mvPaperDeep, radiusDp = 10)
+                    context.roundedBackground(context.mvSurfaceAlt, radiusDp = 6)
                 }
                 previewExecutor.execute {
                     val bitmap = MediaPreviewLoader.decode(File(asset.originalPath), asset.mimeType, context.dp(120))

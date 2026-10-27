@@ -219,6 +219,9 @@ interface AssetDao {
     @Query("UPDATE assets SET favorite = :favorite WHERE id = :id")
     fun setFavorite(id: String, favorite: Boolean): Int
 
+    @Query("UPDATE assets SET display_name = :displayName WHERE id = :id")
+    fun rename(id: String, displayName: String): Int
+
     @Query(
         "UPDATE assets SET last_used_at = :now, use_count = use_count + 1 WHERE id = :id",
     )
@@ -517,6 +520,7 @@ class AssetDatabase(context: Context) : AutoCloseable {
             AssetFilter.GIFS -> AssetType.GIF.name
             AssetFilter.STICKERS -> AssetType.STICKER.name
             AssetFilter.MEMES -> AssetType.MEME.name
+            AssetFilter.VIDEOS -> AssetType.VIDEO.name
             else -> null
         }
         val normalizedSearch = search.trim()
@@ -535,6 +539,11 @@ class AssetDatabase(context: Context) : AutoCloseable {
     fun setFavorite(id: String, favorite: Boolean): Boolean {
         ensureTagsCanonical()
         return dao.setFavorite(id, favorite) == 1
+    }
+
+    fun rename(id: String, displayName: String): Boolean {
+        ensureTagsCanonical()
+        return dao.rename(id, displayName) == 1
     }
 
     fun touchUsed(id: String) {

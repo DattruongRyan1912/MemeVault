@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.MemeVault" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.MemeVault" parent="Base.Theme.MemeVault">
         <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

@@ -13,9 +13,14 @@ internal class CheckerboardDrawable(
     private val lightColor: Int = Color.rgb(247, 248, 252),
     private val darkColor: Int = Color.rgb(226, 230, 240),
 ) : Drawable() {
-    constructor(tilePx: Int, context: Context) : this(tilePx, context.mvSurface, context.mvPaperDeep)
+    constructor(tilePx: Int, context: Context) : this(
+        tilePx,
+        context.getColor(R.color.mv_checker_light),
+        context.getColor(R.color.mv_checker_dark),
+    )
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var alphaValue = 255
 
     override fun draw(canvas: Canvas) {
         val tile = tilePx.coerceAtLeast(4)
@@ -28,6 +33,7 @@ internal class CheckerboardDrawable(
             var x = 0
             while (x < width) {
                 paint.color = if ((row + column) % 2 == 0) lightColor else darkColor
+                paint.alpha = alphaValue
                 canvas.drawRect(x.toFloat(), y.toFloat(),
                     (x + tile).coerceAtMost(width).toFloat(),
                     (y + tile).coerceAtMost(height).toFloat(), paint)
@@ -40,7 +46,7 @@ internal class CheckerboardDrawable(
     }
 
     override fun setAlpha(alpha: Int) {
-        paint.alpha = alpha
+        alphaValue = alpha
         invalidateSelf()
     }
 

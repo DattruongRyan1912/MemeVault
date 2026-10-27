@@ -58,7 +58,7 @@ class ZaloSyncActivity : Activity() {
 
     private fun buildUi() {
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(mvPaper)
+            setBackgroundColor(mvBackground)
             clipToPadding = false
         }
         val root = LinearLayout(this).apply {
@@ -71,32 +71,21 @@ class ZaloSyncActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(mvIconButton("‹", getString(R.string.back), ::finish),
+        header.addView(mvIconButton(R.drawable.ic_arrow_back, getString(R.string.back), ::finish),
             LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(TextView(this).apply {
-            text = "MV"
-            gravity = Gravity.CENTER
-            textSize = 11f
-            includeFontPadding = false
-            setTextColor(mvOrangeContent)
-            rotation = -4f
-            background = roundedBackground(mvOrange, radiusDp = 12)
-        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
-            marginStart = dp(4)
-            marginEnd = dp(8)
-        })
-        header.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_title)
-            applyMvTextStyle(20f, mvInk, 1)
+            applyMvTextStyle(20f, mvText, 1)
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         header.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_experimental_label)
             textSize = 10f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(mvOrangeContent)
-            setPadding(dp(10), 0, dp(10), 0)
-            background = roundedBackground(mvLime, radiusDp = 12)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(mvWarningInk)
+            setPadding(dp(8), 0, dp(8), 0)
+            background = roundedBackground(mvWarningSurface, radiusDp = MV_RADIUS_SMALL, strokeColor = mvLine)
             contentDescription = getString(R.string.zalo_sync_experimental_label)
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)))
         root.addView(header)
@@ -104,14 +93,14 @@ class ZaloSyncActivity : Activity() {
         root.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_subtitle)
             applyMvTextStyle(13f, mvMuted, 4)
-            setPadding(dp(92), 0, 0, dp(14))
+            setPadding(dp(52), 0, 0, dp(14))
         })
 
         val noticeCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBackground(mvWarningSurface, radiusDp = 18,
-                strokeColor = mvOrangeDark)
+            background = roundedBackground(mvWarningSurface, radiusDp = 6,
+                strokeColor = mvPrimaryPressed)
         }
         noticeCard.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_experimental_label)
@@ -130,7 +119,7 @@ class ZaloSyncActivity : Activity() {
 
         root.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_folder_section)
-            applyMvTextStyle(16f, mvInk, 1)
+            applyMvTextStyle(16f, mvText, 1)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -140,9 +129,9 @@ class ZaloSyncActivity : Activity() {
             applyMvTextStyle(12f, mvMuted, 1)
         })
         folderStatus = TextView(this).apply {
-            applyMvTextStyle(13f, mvInk, 4)
+            applyMvTextStyle(13f, mvText, 4)
             setPadding(dp(14), dp(13), dp(14), dp(13))
-            background = roundedBackground(mvSurface, radiusDp = 16,
+            background = roundedBackground(mvSurface, radiusDp = 6,
                 strokeColor = mvLine)
             contentDescription = getString(R.string.zalo_sync_folder_content_description)
         }
@@ -177,7 +166,7 @@ class ZaloSyncActivity : Activity() {
         syncStatus = TextView(this).apply {
             applyMvTextStyle(13f, mvMuted, 20)
             setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = roundedBackground(mvSurface, radiusDp = 16, strokeColor = mvLine)
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         root.addView(syncStatus, LinearLayout.LayoutParams(
@@ -188,11 +177,11 @@ class ZaloSyncActivity : Activity() {
         val fallbackCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBackground(mvPaperDeep, radiusDp = 18, strokeColor = mvLine)
+            background = roundedBackground(mvSurfaceAlt, radiusDp = 6, strokeColor = mvLine)
         }
         fallbackCard.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_fallback_title)
-            applyMvTextStyle(13f, mvInk, 2)
+            applyMvTextStyle(13f, mvText, 2)
         })
         fallbackCard.addView(TextView(this).apply {
             text = getString(R.string.zalo_sync_fallback)
@@ -325,8 +314,8 @@ class ZaloSyncActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             run {
-                window.statusBarColor = mvPaper
-                window.navigationBarColor = mvPaper
+                window.statusBarColor = mvBackground
+                window.navigationBarColor = mvBackground
                 window.decorView.systemUiVisibility = if (night) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
             }
         }

@@ -37,8 +37,9 @@ object DisplayNames {
                 if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
             }
         }.getOrNull()
-        return queried?.takeIf { it.isNotBlank() }
-            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+        // Sender-controlled names are stored and later forwarded to other apps; sanitize them.
+        return DisplayNamePolicy.sanitize(queried).takeIf { it.isNotBlank() }
+            ?: DisplayNamePolicy.sanitize(uri.lastPathSegment?.substringAfterLast('/')).takeIf { it.isNotBlank() }
             ?: "Meme ${System.currentTimeMillis()}"
     }
 

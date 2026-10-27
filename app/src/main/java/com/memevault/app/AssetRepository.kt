@@ -378,6 +378,62 @@ class AssetRepository(private val context: Context) : AutoCloseable {
         }
     }
 
+    /** Renames an asset while keeping its extension; returns the updated asset or null. */
+    fun rename(id: String, requestedBaseName: String): Asset? {
+        awaitReconciliation()
+        val current = findById(id) ?: return null
+        val next = DisplayNamePolicy.rename(current.displayName, requestedBaseName) ?: return null
+        if (next == current.displayName) return current
+        return if (database.rename(id, next)) findById(id) else null
+    }
+
+    /** Bulk favorite toggle; returns how many rows were updated. */
+    fun setFavorite(ids: Collection<String>, favorite: Boolean): Int {
+        awaitReconciliation()
+        return ids.count { database.setFavorite(it, favorite) }
+    }
+
+    /** Adds tags without removing existing ones; returns how many assets were updated. */
+    fun addTags(ids: Collection<String>, tags: List<String>): Int {
+        awaitReconciliation()
+        if (TagNormalizer.normalizeAll(tags).isEmpty()) return 0
+        return ids.count { database.mergeTags(it, tags) != null }
+    }
+
+    /** Deletes each asset independently so one failure does not hide the others. */
+    fun delete(ids: Collection<String>): BulkResult {
+        val failed = ids.filterNot { id -> runCatching { delete(id) }.getOrDefault(false) }
+        return BulkResult(succeeded = ids.size - failed.size, failedIds = failed)
+    }
+
+    fun originalSize(asset: Asset): Long = runCatching {
+        File(asset.originalPath).takeIf { managedOriginal(asset) }?.length() ?: 0L
+    }.getOrDefault(0L)
+
+    /** Counts and on-disk bytes per type; variants are reported separately as cache. */
+    fun stats(): LibraryStats {
+        val assets = list()
+        val byType = assets.groupBy { it.type }.mapValues { (_, items) ->
+            TypeStats(count = items.size, bytes = items.sumOf(::originalSize))
+        }
+        val variantBytes = withStorageReadLock {
+            listFilesRecursively(variantsDirectory).sumOf { it.length() }
+        }
+        val maskBytes = withStorageReadLock {
+            listFilesRecursively(masksDirectory).sumOf { it.length() }
+        }
+        return LibraryStats(
+            totalCount = assets.size,
+            originalBytes = byType.values.sumOf { it.bytes },
+            variantBytes = variantBytes,
+            maskBytes = maskBytes,
+            byType = byType,
+            favoriteCount = assets.count { it.favorite },
+            neverUsedCount = assets.count { it.useCount == 0 },
+            taggedCount = assets.count { it.tags.isNotEmpty() },
+        )
+    }
+
     fun sharedAsset(
         asset: Asset,
         destination: Destination,

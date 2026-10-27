@@ -15,7 +15,12 @@ import java.io.File
  * resolution and returns one poster frame for animated/video media; animation belongs to detail.
  */
 internal object MediaPreviewLoader {
-    private val cache = object : LruCache<String, Bitmap>(4 * 1024) {
+    // One eighth of the heap (in KB): grid, picker and keyboard share this cache, and a 3–4
+    // column grid needs dozens of tiles resident to scroll back without re-decoding.
+    private val cacheSizeKb = (Runtime.getRuntime().maxMemory() / 1024L / 8L)
+        .coerceIn(8L * 1024L, 64L * 1024L).toInt()
+
+    private val cache = object : LruCache<String, Bitmap>(cacheSizeKb) {
         override fun sizeOf(key: String, value: Bitmap): Int =
             (value.byteCount / 1024).coerceAtLeast(1)
     }

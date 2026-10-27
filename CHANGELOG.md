@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.19 — 2026-10-27
+
+Trọng tâm: trải nghiệm quản lý thư viện và giao diện chuyên nghiệp hơn. Hành vi với app bên thứ
+ba (TikTok/Zalo/sticker động) giữ nguyên nhưng chuyển vào mục **Xuất nâng cao (thử nghiệm)**.
+
+- Design system v2: bảng màu zinc trung tính cho sáng/tối, viền hairline 1px, bo góc 4–6dp, một
+  màu nhấn chức năng, metadata kỹ thuật dùng monospace, 21 icon vector thay ký tự ☆ ✦ ⋮ ＋ ⌨.
+  Sửa theme bị `values-v27` ghi đè (dialog/EditText/SeekBar không nhận token trên API 27+).
+- Thư viện: lưới vuông media-first 2/3/4 cột (tự giãn theo chiều rộng, landscape 5+ cột), chip
+  loại kèm số đếm, dải tag dùng như bộ sưu tập (kèm "Chưa có tag"), sắp xếp tách "Mới thêm" và
+  "Dùng gần đây", thêm "Ít dùng"; cụm bộ lọc tự thu khi cuộn xuống (quick-return, không re-layout).
+- Chọn nhiều bằng nhấn giữ: yêu thích, gắn tag và xoá hàng loạt. Xoá không còn hộp thoại xác nhận
+  mà dùng thanh "Hoàn tác" 8 giây; xoá chỉ ghi xuống đĩa khi hết cửa sổ hoặc khi activity dừng.
+- Chi tiết toàn màn hình (cùng repository, không mở Room instance mới): đổi tên giữ đuôi file,
+  sửa tag inline có gợi ý, bảng thông tin (định dạng, kích thước, dung lượng, ngày thêm, dùng gần
+  nhất, số lần dùng, nguồn sticker), yêu thích, xoá.
+- Thống kê kho: số lượng/dung lượng theo loại, yêu thích, chưa dùng, đã gắn tag, cache, mask;
+  lối tắt "Xem mục ít dùng" và "Xem mục chưa có tag".
+- Share/Copy từ Thư viện, Chi tiết và Studio chạy ngoài main thread; Copy dựng `ClipData` với MIME
+  tường minh (audit H2 — một phần: đường chèn của bàn phím vẫn gọi `sharedAsset()` trên main thread).
+  Tên hiển thị nhận từ app khác được làm sạch (audit M4). Preview cache theo heap, huỷ decode khi
+  view bị tái sử dụng, stable id không còn dùng `hashCode()`.
+- Back dùng `OnBackInvokedCallback` (bật `enableOnBackInvokedCallback` cho MainActivity).
+- Kiểm thử: 63 unit test, 8 instrumented test (thêm icon inflate, clip MIME, rename/bulk round trip).
+- Tăng `versionCode` lên 20.
+
 ## 0.1.18 — 2026-09-02
 
 - Cải thiện preview thư viện: giải mã thumbnail có giới hạn cho danh sách, phát GIF/animated WebP

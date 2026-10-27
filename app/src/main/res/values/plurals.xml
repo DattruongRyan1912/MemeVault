@@ -1,7 +1,7 @@
 <resources>
     <plurals name="asset_count">
-        <item quantity="one">1 asset</item>
-        <item quantity="other">%1$d assets</item>
+        <item quantity="one">1 mục</item>
+        <item quantity="other">%1$d mục</item>
     </plurals>
     <plurals name="importing_media">
         <item quantity="one">Đang lưu 1 media…</item>

@@ -1,84 +1,124 @@
 package com.memevault.app
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.Dialog
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.Editable
+import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextWatcher
+import android.text.style.ForegroundColorSpan
+import android.text.style.TypefaceSpan
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
-import android.view.Window
 import android.view.WindowInsetsController
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
-import android.widget.Toast
-import androidx.recyclerview.widget.DiffUtil
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
-    private lateinit var repository: AssetRepository
+    internal lateinit var repository: AssetRepository
+    private lateinit var prefs: LibraryPreferences
+
+    private lateinit var root: FrameLayout
+    private lateinit var normalBar: LinearLayout
+    private lateinit var selectionBar: LinearLayout
+    private lateinit var selectionTitle: TextView
+    private lateinit var search: EditText
+    private lateinit var searchClear: ImageView
+    private lateinit var typeRow: LinearLayout
+    private lateinit var filterBlock: LinearLayout
+    private var scrollAccumulator = 0
+    private val typeChips = linkedMapOf<LibraryTypeFilter, TextView>()
+    private lateinit var tagScroll: HorizontalScrollView
+    private lateinit var tagRow: LinearLayout
+    private lateinit var countLabel: TextView
+    private lateinit var sortButton: TextView
+    private lateinit var densityButton: ImageView
     private lateinit var recycler: RecyclerView
+    private lateinit var gridLayout: GridLayoutManager
+    private lateinit var adapter: LibraryGridAdapter
     private lateinit var emptyState: LinearLayout
     private lateinit var emptyTitle: TextView
     private lateinit var emptyMessage: TextView
-    private lateinit var emptyAction: android.widget.Button
-    private lateinit var status: TextView
-    private lateinit var search: EditText
-    private lateinit var filterRow: LinearLayout
-    private lateinit var sortButton: TextView
-    private lateinit var adapter: AssetAdapter
+    private lateinit var emptyAction: Button
+    private lateinit var createStickerButton: Button
+    private lateinit var bulkBar: LinearLayout
+    private lateinit var bulkFavorite: TextView
+    private lateinit var snackbar: MvSnackbar
 
-    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val dbExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val shareExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-    private val previewExecutor: ExecutorService = Executors.newFixedThreadPool(2)
-    private val previewHandler = Handler(Looper.getMainLooper())
-    private val searchHandler = Handler(Looper.getMainLooper())
+    private val networkExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val previewExecutor: ExecutorService = Executors.newFixedThreadPool(3)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingSearch: Runnable? = null
-    private var filter = AssetFilter.ALL
-    private var sort = SortOrder.RECENT
+
+    private var allAssets: List<Asset> = emptyList()
+    private var loaded = false
+    private var typeFilter = LibraryTypeFilter.ALL
+    private var tagScope: TagScope = TagScope.Any
+    private val selectedIds = linkedSetOf<String>()
+    private var selectionActive = false
+    private val pendingDeletion = linkedSetOf<String>()
+    private var detail: AssetDetailPanel? = null
+    private var sheet: MvSheet? = null
+    private var restoreDetailId: String? = null
     private var refreshGeneration = 0L
+    private var backCallback: OnBackInvokedCallback? = null
+
     @Volatile
     private var destroyed = false
-    private val filterChips = linkedMapOf<AssetFilter, TextView>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repository = AssetRepository(this)
-        filter = savedInstanceState?.getString(KEY_FILTER)
-            ?.let { runCatching { AssetFilter.valueOf(it) }.getOrNull() }
-            ?: AssetFilter.ALL
-        sort = savedInstanceState?.getString(KEY_SORT)
-            ?.let { runCatching { SortOrder.valueOf(it) }.getOrNull() }
-            ?: SortOrder.RECENT
+        prefs = LibraryPreferences(this)
+        savedInstanceState?.let(::restoreState)
         configureSystemBars()
         buildUi()
         savedInstanceState?.getString(KEY_QUERY)?.let { search.setText(it) }
-        handleIncomingIntent(intent)
+        if (savedInstanceState == null) handleIncomingIntent(intent)
         refresh()
     }
 
     override fun onResume() {
         super.onResume()
-        if (!destroyed && ::recycler.isInitialized) refresh()
+        if (!destroyed && ::recycler.isInitialized && loaded) refresh()
+    }
+
+    override fun onStop() {
+        // Commit any deletion still waiting for "Undo" before the process can be killed.
+        if (::snackbar.isInitialized) snackbar.dismiss()
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -86,297 +126,376 @@ class MainActivity : Activity() {
         if (destroyed) return
         setIntent(intent)
         handleIncomingIntent(intent)
-        refresh()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(KEY_QUERY, search.text?.toString().orEmpty())
-        outState.putString(KEY_FILTER, filter.name)
-        outState.putString(KEY_SORT, sort.name)
+        outState.putString(KEY_TYPE, typeFilter.name)
+        when (val scope = tagScope) {
+            TagScope.Untagged -> outState.putString(KEY_TAG_SCOPE, SCOPE_UNTAGGED)
+            is TagScope.Tag -> {
+                outState.putString(KEY_TAG_SCOPE, scope.key)
+                outState.putString(KEY_TAG_LABEL, scope.label)
+            }
+            TagScope.Any -> Unit
+        }
+        if (selectionActive) outState.putStringArrayList(KEY_SELECTION, ArrayList(selectedIds))
+        detail?.asset?.id?.let { outState.putString(KEY_DETAIL, it) }
         super.onSaveInstanceState(outState)
     }
 
-    private fun buildUi() {
-        val root = FrameLayout(this).apply { setBackgroundColor(mvPaper) }
-        applySystemBarInsets(root)
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, dp(8))
+    private fun restoreState(state: Bundle) {
+        typeFilter = state.getString(KEY_TYPE)
+            ?.let { runCatching { LibraryTypeFilter.valueOf(it) }.getOrNull() }
+            ?: LibraryTypeFilter.ALL
+        tagScope = when (val key = state.getString(KEY_TAG_SCOPE)) {
+            null -> TagScope.Any
+            SCOPE_UNTAGGED -> TagScope.Untagged
+            else -> TagScope.Tag(key, state.getString(KEY_TAG_LABEL) ?: key)
         }
-        root.addView(content, FrameLayout.LayoutParams(
+        state.getStringArrayList(KEY_SELECTION)?.let {
+            selectedIds.addAll(it)
+            selectionActive = it.isNotEmpty()
+        }
+        restoreDetailId = state.getString(KEY_DETAIL)
+    }
+
+    // region UI construction
+
+    private fun buildUi() {
+        root = FrameLayout(this).apply {
+            setBackgroundColor(mvBackground)
+            // Keep initial focus off the search field so the keyboard never opens on launch.
+            isFocusableInTouchMode = true
+        }
+        applySystemBarInsets(root)
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(column, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
 
-        val appBar = LinearLayout(this).apply {
+        val barHost = FrameLayout(this)
+        normalBar = buildNormalBar()
+        selectionBar = buildSelectionBar()
+        barHost.addView(normalBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        barHost.addView(selectionBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        column.addView(barHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+
+        column.addView(buildSearch(), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(MV_TOUCH),
+        ).apply { setMargins(dp(16), dp(4), dp(16), dp(4)) })
+
+        filterBlock = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val typeScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            setPadding(dp(16), 0, dp(16), 0)
+        }
+        typeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        LibraryTypeFilter.values().forEach { option ->
+            val chip = mvChip(option.label) {
+                typeFilter = option
+                applyView(scrollToTop = true)
+            }
+            typeChips[option] = chip
+            typeRow.addView(chip, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(MV_TOUCH),
+            ).apply { marginEnd = dp(6) })
+        }
+        typeScroll.addView(typeRow)
+        filterBlock.addView(typeScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)))
+
+        tagScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            setPadding(dp(16), 0, dp(16), 0)
+            visibility = View.GONE
+        }
+        tagRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        appBar.addView(TextView(this).apply {
-            text = "MV"
-            gravity = Gravity.CENTER
-            textSize = 12f
-            includeFontPadding = false
-            setTextColor(mvInk)
-            rotation = -4f
-            background = roundedBackground(mvOrange, radiusDp = 13)
-        }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginEnd = dp(10) })
-        val titleColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titleColumn.addView(TextView(this).apply {
-            text = getString(R.string.app_name)
-            applyMvTextStyle(24f, Color.rgb(23, 32, 51), 1)
+        tagScroll.addView(tagRow)
+        filterBlock.addView(tagScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)))
+        filterBlock.addView(buildToolbar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)).apply {
+            topMargin = dp(2)
         })
-        titleColumn.addView(TextView(this).apply {
-            text = getString(R.string.app_subtitle_short)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 1)
-        })
-        appBar.addView(titleColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        appBar.addView(mvIconButton("⌨", getString(R.string.open_keyboard_settings)) {
-            openKeyboardSettings()
-        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(4) })
-        appBar.addView(mvIconButton("＋", getString(R.string.import_media)) {
-            showImportOptions()
-        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(4) })
-        appBar.addView(mvIconButton("⋮", getString(R.string.library_more_actions)) {
-            showHelpDialog()
-        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(4) })
-        content.addView(appBar, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(56),
-        ))
+        filterBlock.addView(mvDivider(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+        // The filter block overlays the grid and slides away with translationY; the grid only
+        // reserves its height as top padding, so hiding it never re-lays out the RecyclerView.
+        filterBlock.setBackgroundColor(mvBackground)
+        filterBlock.elevation = dp(1).toFloat()
 
-        val hero = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, dp(6))
+        val gridHost = FrameLayout(this)
+        column.addView(gridHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        gridLayout = GridLayoutManager(this, prefs.columns)
+        adapter = LibraryGridAdapter(
+            activity = this,
+            previewExecutor = previewExecutor,
+            previewHandler = mainHandler,
+            isSelected = { it in selectedIds },
+            selectionActive = { selectionActive },
+            onClick = ::onTileClick,
+            onLongClick = ::onTileLongClick,
+        )
+        recycler = RecyclerView(this).apply {
+            layoutManager = gridLayout
+            adapter = this@MainActivity.adapter
+            clipToPadding = false
+            setPadding(dp(14), dp(180), dp(14), dp(88))
+            itemAnimator = null
+            setHasFixedSize(true)
+            contentDescription = getString(R.string.library_content_description)
+            addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+                if (right - left != oldRight - oldLeft) updateSpan()
+            }
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    onGridScrolled(dy)
+                }
+
+                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                    if (newState == RecyclerView.SCROLL_STATE_IDLE) onGridScrolled(0)
+                }
+            })
         }
-        hero.addView(TextView(this).apply {
-            text = getString(R.string.library_hero_title)
-            applyMvTextStyle(22f, Color.rgb(23, 32, 51), 2)
-        })
-        hero.addView(TextView(this).apply {
-            text = getString(R.string.library_hero_subtitle)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 2)
-            setPadding(0, dp(4), 0, 0)
-        })
-        content.addView(hero, LinearLayout.LayoutParams(
+        gridHost.addView(recycler, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        emptyState = buildEmptyState()
+        gridHost.addView(emptyState, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP,
+        ).apply { setMargins(dp(16), dp(24), dp(16), 0) })
+        gridHost.addView(filterBlock, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP,
         ))
+        filterBlock.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            val height = bottom - top
+            if (height != oldBottom - oldTop) recycler.post { reserveFilterSpace(height) }
+        }
 
+        createStickerButton = mvButton(getString(R.string.create_sticker_action), { openAssetPicker() },
+            primary = true, iconRes = R.drawable.ic_cut)
+        root.addView(createStickerButton, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            dp(MV_TOUCH),
+            Gravity.BOTTOM or Gravity.END,
+        ).apply { setMargins(0, 0, dp(16), dp(16)) })
+
+        bulkBar = buildBulkBar()
+        root.addView(bulkBar, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(64),
+            Gravity.BOTTOM,
+        ))
+        snackbar = MvSnackbar(root)
+        setContentView(root)
+        root.requestFocus()
+        updateChrome()
+    }
+
+    private fun buildNormalBar(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16), 0, dp(4), 0)
+        addView(TextView(this@MainActivity).apply {
+            text = getString(R.string.app_name)
+            applyMvTextStyle(20f, mvText, 1)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val importButton = mvIconButton(R.drawable.ic_add, getString(R.string.import_media), {})
+        importButton.setOnClickListener { showImportMenu(it) }
+        addView(importButton)
+        val more = mvIconButton(R.drawable.ic_more_vert, getString(R.string.library_more_actions), {})
+        more.setOnClickListener { showOverflowMenu(it) }
+        addView(more)
+    }
+
+    private fun buildSelectionBar(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(4), 0, dp(4), 0)
+        setBackgroundColor(mvSurfaceAlt)
+        visibility = View.GONE
+        addView(mvIconButton(R.drawable.ic_close, "Thoát chế độ chọn", { exitSelection() }))
+        selectionTitle = TextView(this@MainActivity).apply {
+            applyMvTextStyle(16f, mvText, 1)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setPadding(dp(4), 0, 0, 0)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        addView(selectionTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(mvIconButton(R.drawable.ic_select_all, "Chọn tất cả đang hiển thị", { selectAllVisible() }))
+    }
+
+    private fun buildSearch(): View {
+        val frame = FrameLayout(this)
         search = EditText(this).apply {
             hint = getString(R.string.search_hint)
             setSingleLine(true)
             textSize = 15f
-            setTextColor(mvInk)
+            setTextColor(mvText)
             setHintTextColor(mvMuted)
-            setPadding(dp(14), 0, dp(14), 0)
-            background = roundedBackground(mvSurface, radiusDp = 18, strokeColor = mvLine)
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setPadding(dp(40), 0, dp(44), 0)
+            background = roundedBackground(mvSurface, MV_RADIUS, mvLine)
             contentDescription = getString(R.string.search_content_description)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                override fun afterTextChanged(s: Editable?) { scheduleRefresh() }
+                override fun afterTextChanged(s: Editable?) {
+                    searchClear.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
+                    scheduleRefresh()
+                }
             })
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    hideKeyboard()
+                    true
+                } else {
+                    false
+                }
+            }
         }
-        content.addView(search, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(50),
-        ).apply {
-            topMargin = dp(8)
-            bottomMargin = dp(8)
+        frame.addView(search, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(ImageView(this).apply {
+            setMvIcon(R.drawable.ic_search, mvMuted)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER_VERTICAL or Gravity.START).apply {
+            marginStart = dp(12)
         })
+        searchClear = mvIconButton(R.drawable.ic_close, "Xoá từ khoá", {
+            search.setText("")
+        }, tint = mvMuted).apply { visibility = View.GONE }
+        frame.addView(searchClear, FrameLayout.LayoutParams(dp(MV_TOUCH), dp(MV_TOUCH), Gravity.CENTER_VERTICAL or Gravity.END))
+        return frame
+    }
 
-        val filterScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            clipToPadding = false
-        }
-        filterRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        addFilterChip("Tất cả", AssetFilter.ALL)
-        addFilterChip("Yêu thích", AssetFilter.FAVORITES)
-        addFilterChip("Meme", AssetFilter.MEMES)
-        addFilterChip("Sticker", AssetFilter.STICKERS)
-        addFilterChip("Động", AssetFilter.ANIMATED)
-        addFilterChip("GIF", AssetFilter.GIFS)
-        filterScroll.addView(filterRow, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            dp(48),
-        ))
-        content.addView(filterScroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(48),
-        ))
-
-        val statusRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        status = TextView(this).apply {
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 1)
-            setPadding(dp(2), dp(6), 0, dp(6))
+    private fun buildToolbar(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16), 0, dp(4), 0)
+        countLabel = TextView(this@MainActivity).apply {
+            applyMvMonoStyle(12f)
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
-        statusRow.addView(status, LinearLayout.LayoutParams(0, dp(48), 1f))
-        sortButton = TextView(this).apply {
-            text = sort.label
-            gravity = Gravity.CENTER
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 1)
-            background = roundedBackground(mvSurface, radiusDp = 15, strokeColor = mvLine)
+        addView(countLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        sortButton = TextView(this@MainActivity).apply {
+            applyMvTextStyle(13f, mvText, 1)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(10), 0)
+            val icon = getDrawable(R.drawable.ic_sort)?.mutate()?.apply {
+                setTint(mvMuted)
+                setBounds(0, 0, dp(18), dp(18))
+            }
+            setCompoundDrawablesRelative(icon, null, null, null)
+            compoundDrawablePadding = dp(6)
             isClickable = true
             isFocusable = true
-            contentDescription = getString(R.string.sort_content_description)
-            setOnClickListener { showSortDialog() }
+            background = roundedBackground(Color.TRANSPARENT)
+            setOnClickListener { showSortMenu(it) }
         }
-        statusRow.addView(sortButton, LinearLayout.LayoutParams(dp(112), dp(48)).apply {
-            marginStart = dp(8)
-        })
-        content.addView(statusRow)
+        addView(sortButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(MV_TOUCH)))
+        densityButton = mvIconButton(R.drawable.ic_grid, "", { cycleDensity() }, tint = mvMuted)
+        addView(densityButton)
+    }
 
-        emptyState = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(24), dp(20), dp(24), dp(20))
-            background = roundedBackground(mvSurface, radiusDp = 22, strokeColor = mvLine)
-            visibility = View.GONE
-        }
-        emptyState.addView(TextView(this).apply {
-            text = "✦"
-            textSize = 30f
-            gravity = Gravity.CENTER
-            setTextColor(mvOrange)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
-        emptyTitle = TextView(this).apply {
-            applyMvTextStyle(17f, Color.rgb(23, 32, 51), 2)
+    private fun buildEmptyState(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(20), dp(28), dp(20), dp(24))
+        background = roundedBackground(mvSurface, MV_RADIUS, mvLine)
+        visibility = View.GONE
+        emptyTitle = TextView(this@MainActivity).apply {
+            applyMvTextStyle(16f, mvText, 2)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
         }
-        emptyState.addView(emptyTitle, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(4) })
-        emptyMessage = TextView(this).apply {
-            applyMvTextStyle(13f, Color.rgb(91, 101, 124), 4)
+        addView(emptyTitle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        emptyMessage = TextView(this@MainActivity).apply {
+            applyMvTextStyle(14f, mvMuted, 4)
             gravity = Gravity.CENTER
+            setLineSpacing(dp(2).toFloat(), 1f)
         }
-        emptyState.addView(emptyMessage, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply {
-            topMargin = dp(4)
-            bottomMargin = dp(10)
-        })
-        emptyAction = mvButton(getString(R.string.import_media), { showImportOptions() }, primary = true)
-        emptyState.addView(emptyAction, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            dp(48),
-        ))
-        content.addView(emptyState, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(8) })
-
-        adapter = AssetAdapter(
-            context = this,
-            previewExecutor = previewExecutor,
-            previewHandler = previewHandler,
-            onOpen = ::showAssetDetail,
-            onFavorite = ::toggleFavorite,
-            onMore = ::showAssetActions,
-            onCreateSticker = ::openStickerStudio,
-        )
-        recycler = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@MainActivity, COLUMN_COUNT)
-            adapter = this@MainActivity.adapter
-            clipToPadding = false
-            // Leave the last cards reachable above both persistent quick actions.
-            setPadding(dp(0), dp(0), dp(0), dp(132))
-            itemAnimator = null
-            contentDescription = getString(R.string.library_content_description)
-        }
-        content.addView(recycler, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-            1f,
-        ))
-
-        val createSticker = mvButton(
-            getString(R.string.create_sticker_action),
-            { openAssetPicker() },
-            primary = true,
-        ).apply {
-            elevation = dp(5).toFloat()
-            contentDescription = getString(R.string.create_sticker_action)
-        }
-        root.addView(createSticker, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            dp(52),
-            Gravity.BOTTOM or Gravity.END,
-        ).apply {
-            marginEnd = dp(16)
+        addView(emptyMessage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(6)
             bottomMargin = dp(16)
         })
-        setContentView(root)
-        updateFilterChipStyles()
+        emptyAction = mvButton("", {}, primary = true)
+        addView(emptyAction, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(MV_TOUCH)))
     }
 
-    private fun addFilterChip(label: String, value: AssetFilter) {
-        val chip = TextView(this).apply {
+    private fun buildBulkBar(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setBackgroundColor(mvSurface)
+        visibility = View.GONE
+        isClickable = true
+        elevation = dp(MV_ELEVATION_BAR).toFloat()
+        bulkFavorite = bulkAction(R.drawable.ic_star_border, "Yêu thích", mvText) { bulkToggleFavorite() }
+        addView(bulkFavorite, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        addView(bulkAction(R.drawable.ic_label, "Gắn tag", mvText) { showBulkTagSheet() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        addView(bulkAction(R.drawable.ic_delete, "Xoá", mvDanger) {
+            requestDelete(allAssets.filter { it.id in selectedIds })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+    }
+
+    private fun bulkAction(iconRes: Int, label: String, tint: Int, onClick: () -> Unit): TextView =
+        TextView(this).apply {
             text = label
+            textSize = 12f
+            setTextColor(tint)
             gravity = Gravity.CENTER
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 1)
+            includeFontPadding = false
+            val icon = getDrawable(iconRes)?.mutate()?.apply {
+                setTint(tint)
+                setBounds(0, 0, dp(22), dp(22))
+            }
+            setCompoundDrawablesRelative(null, icon, null, null)
+            compoundDrawablePadding = dp(4)
             isClickable = true
             isFocusable = true
-            setPadding(dp(16), 0, dp(16), 0)
-            setOnClickListener {
-                filter = value
-                updateFilterChipStyles()
-                refresh()
-            }
+            background = roundedBackground(Color.TRANSPARENT)
+            setOnClickListener { onClick() }
         }
-        filterChips[value] = chip
-        filterRow.addView(chip, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            dp(48),
-        ).apply { marginEnd = dp(8) })
-    }
 
-    private fun updateFilterChipStyles() {
-        filterChips.forEach { (value, chip) ->
-            val selected = value == filter
-            chip.background = roundedBackground(
-                if (selected) mvColor(R.color.mv_tag_surface) else mvSurface,
-                radiusDp = 18,
-                strokeColor = if (selected) mvPurple else mvLine,
-            )
-            chip.setTextColor(if (selected) mvPurpleDark else mvInk)
-            chip.contentDescription = if (selected) {
-                "Đang lọc ${chip.text}"
-            } else {
-                "Lọc ${chip.text}"
-            }
-        }
-    }
+    // endregion
+
+    // region Data and view state
 
     private fun refresh() {
         if (destroyed || !::recycler.isInitialized) return
         val generation = ++refreshGeneration
-        status.text = getString(R.string.status_loading)
         val query = search.text?.toString().orEmpty()
-        submitDbOperation {
-            val result = runCatching { repository.list(filter, query).sortedWith(sort.comparator) }
-            runOnUiThread {
-                if (isUiUnavailable() || generation != refreshGeneration) return@runOnUiThread
-                result.onSuccess(::render).onFailure { error ->
-                    adapter.submit(emptyList())
-                    recycler.visibility = View.GONE
-                    setEmptyState(
+        runDb {
+            val result = runCatching { repository.list(AssetFilter.ALL, query) }
+            runOnUi {
+                if (generation != refreshGeneration) return@runOnUi
+                result.onSuccess { assets ->
+                    allAssets = assets
+                    loaded = true
+                    applyView()
+                    restoreDetailId?.let { id ->
+                        restoreDetailId = null
+                        assets.firstOrNull { it.id == id }?.let(::openDetail)
+                    }
+                }.onFailure { error ->
+                    allAssets = emptyList()
+                    adapter.submitList(emptyList())
+                    showEmpty(
                         getString(R.string.library_load_error_title),
                         error.message ?: getString(R.string.status_load_error),
                         getString(R.string.retry),
                     ) { refresh() }
-                    status.text = getString(R.string.status_load_error)
                 }
             }
         }
@@ -384,52 +503,128 @@ class MainActivity : Activity() {
 
     private fun scheduleRefresh() {
         if (destroyed) return
-        pendingSearch?.let(searchHandler::removeCallbacks)
-        pendingSearch = Runnable { refresh() }.also {
-            searchHandler.postDelayed(it, SEARCH_DEBOUNCE_MS)
-        }
+        pendingSearch?.let(mainHandler::removeCallbacks)
+        pendingSearch = Runnable { refresh() }.also { mainHandler.postDelayed(it, SEARCH_DEBOUNCE_MS) }
     }
 
-    private fun render(assets: List<Asset>) {
-        adapter.submit(assets)
-        if (assets.isEmpty()) {
-            recycler.visibility = View.GONE
-            val hasQuery = search.text?.isNotBlank() == true
-            setEmptyState(
-                if (hasQuery || filter != AssetFilter.ALL) {
-                    getString(R.string.library_filtered_empty_title)
-                } else {
-                    getString(R.string.library_empty_title)
-                },
-                if (hasQuery || filter != AssetFilter.ALL) {
-                    getString(R.string.library_filtered_empty_message)
-                } else {
-                    getString(R.string.empty_state)
-                },
-                if (hasQuery || filter != AssetFilter.ALL) {
-                    getString(R.string.clear_filters)
-                } else {
-                    getString(R.string.import_media)
-                },
-            ) {
-                if (hasQuery || filter != AssetFilter.ALL) {
-                    search.setText("")
-                    filter = AssetFilter.ALL
-                    updateFilterChipStyles()
-                    refresh()
-                } else {
-                    showImportOptions()
-                }
+    private fun applyView(scrollToTop: Boolean = false) {
+        if (scrollToTop) setFiltersVisible(true)
+        val sort = prefs.sort
+        if (tagScope is TagScope.Tag && allAssets.none { LibraryView.matches(it, tagScope) }) {
+            tagScope = TagScope.Any
+        }
+        val visible = LibraryView.apply(allAssets, typeFilter.filter, tagScope, sort, pendingDeletion)
+        adapter.submitList(visible) {
+            if (scrollToTop) recycler.scrollToPosition(0)
+        }
+        val total = allAssets.count { it.id !in pendingDeletion }
+        val hasQuery = search.text?.isNotBlank() == true
+        val narrowed = hasQuery || typeFilter != LibraryTypeFilter.ALL || tagScope != TagScope.Any
+        countLabel.text = when {
+            // While searching, totals describe the result set, so "x / y" would mislead.
+            hasQuery -> "${visible.size} kết quả"
+            narrowed -> "${visible.size} / $total mục"
+            else -> "$total mục"
+        }
+        sortButton.text = sort.label
+        sortButton.contentDescription = "Sắp xếp: ${sort.label}"
+        renderTypeChips()
+        renderTagStrip()
+        if (visible.isEmpty()) {
+            if (narrowed) {
+                showEmpty(
+                    getString(R.string.library_filtered_empty_title),
+                    getString(R.string.library_filtered_empty_message),
+                    getString(R.string.clear_filters),
+                ) { clearFilters() }
+            } else {
+                showEmpty(
+                    getString(R.string.library_empty_title),
+                    getString(R.string.empty_state),
+                    getString(R.string.import_media),
+                ) { openPicker() }
             }
         } else {
             emptyState.visibility = View.GONE
-            recycler.visibility = View.VISIBLE
         }
-        status.text = resources.getQuantityString(R.plurals.asset_count, assets.size, assets.size)
-        sortButton.text = sort.label
+        selectedIds.retainAll(visible.map { it.id }.toSet())
+        if (selectionActive && selectedIds.isEmpty()) exitSelection() else updateChrome()
+        detail?.let { panel ->
+            val updated = allAssets.firstOrNull { it.id == panel.asset.id && it.id !in pendingDeletion }
+            if (updated == null) closeDetail() else panel.update(updated)
+        }
     }
 
-    private fun setEmptyState(title: String, message: String, action: String, onClick: () -> Unit) {
+    private fun renderTypeChips() {
+        val counts = LibraryView.countsByFilter(allAssets, pendingDeletion)
+        typeChips.forEach { (option, chip) ->
+            val selected = option == typeFilter
+            val count = counts[option.filter] ?: 0
+            chip.text = labelWithCount(option.label, count, selected)
+            chip.styleMvChip(selected)
+            chip.contentDescription = "${option.label}, $count mục" + if (selected) ", đang lọc" else ""
+        }
+    }
+
+    private fun renderTagStrip() {
+        tagRow.removeAllViews()
+        val tags = LibraryView.topTags(allAssets, TAG_STRIP_LIMIT, pendingDeletion).toMutableList()
+        val scope = tagScope
+        if (scope is TagScope.Tag && tags.none { it.key == scope.key }) {
+            tags.add(0, TagCount(scope.key, scope.label, allAssets.count { LibraryView.matches(it, scope) }))
+        }
+        val untagged = allAssets.count { it.id !in pendingDeletion && it.tags.isEmpty() }
+        tagScroll.visibility = if (tags.isEmpty() && untagged == 0) View.GONE else View.VISIBLE
+        tagRow.addView(ImageView(this).apply {
+            setMvIcon(R.drawable.ic_label, mvMuted)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) })
+        if (untagged > 0 && tags.isNotEmpty()) {
+            val selected = tagScope == TagScope.Untagged
+            addTagChip("Chưa có tag", untagged, selected) {
+                tagScope = if (selected) TagScope.Any else TagScope.Untagged
+                applyView(scrollToTop = true)
+            }
+        }
+        tags.forEach { tag ->
+            val selected = (tagScope as? TagScope.Tag)?.key == tag.key
+            addTagChip(tag.label, tag.count, selected) {
+                tagScope = if (selected) TagScope.Any else TagScope.Tag(tag.key, tag.label)
+                applyView(scrollToTop = true)
+            }
+        }
+        if (tags.isEmpty() && untagged > 0) {
+            tagRow.addView(TextView(this).apply {
+                text = "Gắn tag để gom media thành bộ sưu tập"
+                applyMvTextStyle(13f, mvMuted, 1)
+            })
+        }
+    }
+
+    private fun addTagChip(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
+        val chip = mvChip(labelWithCount(label, count, selected), onClick)
+        chip.styleMvChip(selected)
+        chip.contentDescription = "Tag $label, $count mục" + if (selected) ", đang lọc" else ""
+        tagRow.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(MV_TOUCH)).apply {
+            marginEnd = dp(6)
+        })
+    }
+
+    private fun labelWithCount(label: String, count: Int, selected: Boolean): CharSequence {
+        val builder = SpannableStringBuilder(label).append("  ")
+        val start = builder.length
+        builder.append(count.toString())
+        builder.setSpan(TypefaceSpan("monospace"), start, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        builder.setSpan(
+            ForegroundColorSpan(if (selected) mvOnPrimary else mvMuted),
+            start,
+            builder.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        return builder
+    }
+
+    private fun showEmpty(title: String, message: String, action: String, onClick: () -> Unit) {
         emptyTitle.text = title
         emptyMessage.text = message
         emptyAction.text = action
@@ -437,441 +632,453 @@ class MainActivity : Activity() {
         emptyState.visibility = View.VISIBLE
     }
 
-    private fun showSortDialog() {
-        val options = SortOrder.values()
-        val checked = options.indexOf(sort).coerceAtLeast(0)
-        AlertDialog.Builder(this)
-            .setTitle(R.string.sort_title)
-            .setSingleChoiceItems(options.map { it.label }.toTypedArray(), checked) { dialog, which ->
-                sort = options[which]
-                sortButton.text = sort.label
-                dialog.dismiss()
-                refresh()
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+    private fun clearFilters() {
+        typeFilter = LibraryTypeFilter.ALL
+        tagScope = TagScope.Any
+        if (search.text?.isNotEmpty() == true) search.setText("") else applyView(scrollToTop = true)
     }
 
-    private fun showAssetDetail(asset: Asset) {
-        if (asset.type == AssetType.STICKER && asset.sourceAssetId == null) {
-            submitDbOperation {
-                val sourceMissing = repository.findStickerRecipe(asset.id) != null
-                runOnUiThread {
-                    if (!isUiUnavailable()) renderAssetDetail(asset, sourceMissing)
-                }
-            }
-            return
-        }
-        renderAssetDetail(asset, sourceMissing = false)
+    /** Recomputes the column count from the density preference and the grid width. */
+    private fun updateSpan() {
+        val width = recycler.width - recycler.paddingLeft - recycler.paddingRight
+        if (width <= 0) return
+        val widthDp = (width / resources.displayMetrics.density).toInt()
+        val span = LibraryPreferences.spanFor(prefs.columns, widthDp)
+        if (gridLayout.spanCount != span) gridLayout.spanCount = span
+        adapter.columns = span
+        adapter.tilePx = (width / span).coerceAtLeast(dp(64))
     }
 
-    private fun renderAssetDetail(asset: Asset, sourceMissing: Boolean) {
-        if (destroyed) return
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val scroll = android.widget.ScrollView(this)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(18))
-            background = roundedBackground(mvSurface, radiusDp = 20)
-        }
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(TextView(this).apply {
-            text = getString(R.string.asset_detail_title)
-            applyMvTextStyle(20f, Color.rgb(23, 32, 51), 1)
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        header.addView(mvIconButton("×", getString(R.string.close), dialog::dismiss), LinearLayout.LayoutParams(dp(48), dp(48)))
-        root.addView(header)
-
-        val detailPreview = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            contentDescription = asset.displayName
-            background = CheckerboardDrawable(dp(16), this@MainActivity)
-            tag = asset.id
-        }
-        root.addView(detailPreview, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(300),
-        ).apply { bottomMargin = dp(12) })
-
-        root.addView(TextView(this).apply {
-            text = asset.displayName
-            applyMvTextStyle(17f, Color.rgb(23, 32, 51), 2)
-        })
-        root.addView(TextView(this).apply {
-            text = assetMetadata(asset)
-            applyMvTextStyle(13f, Color.rgb(91, 101, 124), 2)
-            setPadding(0, dp(4), 0, dp(12))
-        })
-
-        if (sourceMissing) {
-            root.addView(TextView(this).apply {
-                text = getString(R.string.sticker_source_missing_detail)
-                applyMvTextStyle(12f, mvOrangeDark, 2)
-                setPadding(0, 0, 0, dp(8))
-            })
-        }
-
-        root.addView(TextView(this).apply {
-            text = getString(R.string.asset_tags_title)
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 1)
-        })
-        val tagChipRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val tagChipScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(tagChipRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)))
-        }
-        root.addView(tagChipScroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(42),
-        ).apply { topMargin = dp(4) })
-        val tagsInput = EditText(this).apply {
-            hint = getString(R.string.asset_tags_hint)
-            setSingleLine(true)
-            textSize = 14f
-            setTextColor(mvInk)
-            setHintTextColor(mvMuted)
-            setText(asset.tags.joinToString(", "))
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            contentDescription = getString(R.string.asset_tags_content_description)
-            background = roundedBackground(mvSurface, radiusDp = 12, strokeColor = mvLine)
-        }
-        fun renderTagChips() {
-            tagChipRow.removeAllViews()
-            TagNormalizer.normalizeAll(tagsInput.text.toString().split(','))
-                .forEach { normalized ->
-                    tagChipRow.addView(
-                        mvTagChip(normalized.displayName) {
-                            val remaining = TagNormalizer.normalizeAll(tagsInput.text.toString().split(','))
-                                .filterNot { it.key == normalized.key }
-                            tagsInput.setText(remaining.joinToString(", ") { it.displayName })
-                            tagsInput.setSelection(tagsInput.text.length)
-                        },
-                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)).apply {
-                            marginEnd = dp(6)
-                        },
-                    )
-                }
-        }
-        tagsInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = renderTagChips()
-            override fun afterTextChanged(s: Editable?) = Unit
-        })
-        root.addView(tagsInput, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(48),
-        ).apply { bottomMargin = dp(4) })
-        renderTagChips()
-        val tagActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        tagActions.addView(mvButton(getString(R.string.asset_tags_suggest), {
-            showTagSuggestions(tagsInput)
-        }), LinearLayout.LayoutParams(0, dp(48), 1f))
-        tagActions.addView(mvButton(getString(R.string.asset_tags_save), {
-            val rawTags = tagsInput.text.toString().split(',')
-            submitDbOperation {
-                val updated = repository.updateTags(asset.id, rawTags)
-                runOnUiThread {
-                    if (isUiUnavailable()) return@runOnUiThread
-                    if (updated != null) {
-                        Toast.makeText(this, R.string.asset_tags_saved, Toast.LENGTH_SHORT).show()
-                        dialog.dismiss()
-                        refresh()
-                    } else {
-                        showError(getString(R.string.asset_tags_save_failed))
-                    }
-                }
-            }
-        }), LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(8) })
-        root.addView(tagActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
-            bottomMargin = dp(10)
-        })
-
-        val mainActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        mainActions.addView(mvButton(getString(R.string.share), {
-            markUsed(asset.id)
-            ShareManager.share(this, repository, asset, Destination.SYSTEM, shareExecutor, ::showError)
-        }, primary = true), LinearLayout.LayoutParams(0, dp(50), 1f))
-        mainActions.addView(mvButton(getString(R.string.copy), {
-            markUsed(asset.id)
-            ShareManager.copy(this, repository, asset, ::showError)
-        }, primary = false), LinearLayout.LayoutParams(0, dp(50), 1f).apply {
-            marginStart = dp(8)
-        })
-        root.addView(mainActions)
-
-        if (asset.type == AssetType.GIF) {
-            val stickerActions = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            stickerActions.addView(mvButton(getString(R.string.share_animated_sticker), {
-                markUsed(asset.id)
-                ShareManager.shareAnimatedSticker(
-                    this,
-                    repository,
-                    asset,
-                    shareExecutor,
-                    ::showError,
-                )
-            }), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(50),
-            ).apply { topMargin = dp(8) })
-            stickerActions.addView(TextView(this).apply {
-                text = getString(R.string.share_animated_sticker_note)
-                applyMvTextStyle(12f, Color.rgb(91, 101, 124), 3)
-                setPadding(dp(4), dp(6), dp(4), 0)
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-            root.addView(stickerActions)
-        }
-
-        val secondaryActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        secondaryActions.addView(mvButton(
-            if (asset.type == AssetType.STICKER) getString(R.string.edit_sticker_short)
-            else getString(R.string.create_sticker_short),
-            {
-            dialog.dismiss()
-            openStickerStudio(asset)
-            },
-        ), LinearLayout.LayoutParams(0, dp(50), 1f).apply { topMargin = dp(8) })
-        secondaryActions.addView(mvButton(getString(R.string.tiktok), {
-            markUsed(asset.id)
-            shareToHost(asset, Destination.TIKTOK)
-        }), LinearLayout.LayoutParams(0, dp(50), 1f).apply {
-            marginStart = dp(8)
-            topMargin = dp(8)
-        })
-        root.addView(secondaryActions)
-
-        val platformActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        platformActions.addView(mvButton(getString(R.string.zalo), {
-            markUsed(asset.id)
-            shareToHost(asset, Destination.ZALO)
-        }), LinearLayout.LayoutParams(0, dp(50), 1f).apply { topMargin = dp(8) })
-        platformActions.addView(TextView(this).apply {
-            text = getString(R.string.asset_detail_export_note)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 4)
-            setPadding(dp(10), dp(4), 0, 0)
-        }, LinearLayout.LayoutParams(0, dp(50), 2f).apply {
-            marginStart = dp(8)
-        })
-        root.addView(platformActions)
-
-        val bottomActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        bottomActions.addView(mvButton(
-            if (asset.favorite) getString(R.string.remove_favorite) else getString(R.string.add_favorite),
-            {
-                toggleFavorite(asset)
-                dialog.dismiss()
-            },
-        ), LinearLayout.LayoutParams(0, dp(50), 1f).apply { topMargin = dp(8) })
-        bottomActions.addView(mvButton(getString(R.string.delete), {
-            confirmDelete(asset, dialog)
-        }), LinearLayout.LayoutParams(0, dp(50), 1f).apply {
-            marginStart = dp(8)
-            topMargin = dp(8)
-        })
-        root.addView(bottomActions)
-
-        root.addView(TextView(this).apply {
-            text = getString(R.string.asset_detail_fallback_note)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 3)
-            setPadding(0, dp(14), 0, 0)
-        })
-        scroll.addView(root)
-        dialog.setContentView(scroll)
-        dialog.setOnDismissListener {
-            MediaPreviewLoader.stopIfAnimated(detailPreview.drawable)
-            detailPreview.tag = null
-        }
-        dialog.show()
-        dialog.window?.apply {
-            setBackgroundDrawableResource(android.R.color.transparent)
-            setLayout(
-                (resources.displayMetrics.widthPixels * 0.94f).toInt(),
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-        }
-        previewExecutor.execute {
-            val file = File(asset.originalPath)
-            val target = dp(360)
-            val animated = MediaPreviewLoader.decodeAnimatedDrawable(file, asset.mimeType, target)
-            val bitmap = if (animated == null) {
-                MediaPreviewLoader.decode(file, asset.mimeType, target)
-            } else {
-                null
-            }
-            previewHandler.post {
-                if (isUiUnavailable() || detailPreview.tag != asset.id) return@post
-                if (animated != null) {
-                    detailPreview.setImageDrawable(animated)
-                    MediaPreviewLoader.startIfAnimated(animated)
-                } else if (bitmap != null) {
-                    detailPreview.setImageBitmap(bitmap)
-                }
-            }
-        }
-    }
-
-    private fun showAssetActions(asset: Asset) {
-        if (destroyed) return
-        val actions = buildList {
-            add(getString(R.string.share) to {
-                markUsed(asset.id)
-                ShareManager.share(this@MainActivity, repository, asset, Destination.SYSTEM, shareExecutor, ::showError)
-            })
-            add(getString(R.string.copy) to {
-                markUsed(asset.id)
-                ShareManager.copy(this@MainActivity, repository, asset, ::showError)
-            })
-            if (asset.type == AssetType.GIF) {
-                add(getString(R.string.share_animated_sticker) to {
-                    markUsed(asset.id)
-                    ShareManager.shareAnimatedSticker(
-                        this@MainActivity,
-                        repository,
-                        asset,
-                        shareExecutor,
-                        ::showError,
-                    )
-                })
-            }
-            add(getString(R.string.tiktok) to {
-                markUsed(asset.id)
-                shareToHost(asset, Destination.TIKTOK)
-            })
-            add(getString(R.string.zalo) to {
-                markUsed(asset.id)
-                shareToHost(asset, Destination.ZALO)
-            })
-            add(
-                getString(
-                    if (asset.type == AssetType.STICKER) R.string.edit_sticker_short
-                    else R.string.create_sticker_short,
-                ) to { openStickerStudio(asset) },
-            )
-            add(
-                getString(if (asset.favorite) R.string.remove_favorite else R.string.add_favorite) to {
-                    toggleFavorite(asset)
-                },
-            )
-            add(getString(R.string.delete) to { confirmDelete(asset) })
-        }
-        AlertDialog.Builder(this)
-            .setTitle(asset.displayName)
-            .setItems(actions.map { it.first }.toTypedArray()) { dialog, which ->
-                actions[which].second()
-                dialog.dismiss()
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+    private fun cycleDensity() {
+        prefs.columns = LibraryPreferences.nextColumns(prefs.columns)
+        updateSpan()
+        updateChrome()
     }
 
     /**
-     * Sticker hosts do not expose a stable native-sticker contract through ACTION_SEND. Keep the
-     * existing opaque image as a safe default, but let a personal user compare the iPhone-like
-     * transparent raster on the same host/version without silently changing the export format.
+     * Quick-return for the filter block: it collapses after a deliberate downward scroll and
+     * returns on any upward scroll or at the top, so media gets the space while browsing.
      */
-    private fun shareToHost(asset: Asset, destination: Destination) {
-        if (isUiUnavailable()) return
-        if (!MediaPolicy.needsStickerCompatibilityProfile(asset, destination)) {
-            ShareManager.share(this, repository, asset, destination, shareExecutor, ::showError)
+    /** Keeps the grid's first row below the overlaid filter block, re-anchoring at the top. */
+    private fun reserveFilterSpace(height: Int) {
+        val top = height + dp(8)
+        if (recycler.paddingTop == top) return
+        val wasAtTop = gridLayout.findFirstVisibleItemPosition() <= 0
+        recycler.setPadding(recycler.paddingLeft, top, recycler.paddingRight, recycler.paddingBottom)
+        (emptyState.layoutParams as FrameLayout.LayoutParams).topMargin = height + dp(16)
+        emptyState.requestLayout()
+        if (wasAtTop) gridLayout.scrollToPositionWithOffset(0, 0)
+    }
+
+    private fun onGridScrolled(dy: Int) {
+        if (!recycler.canScrollVertically(-1)) {
+            scrollAccumulator = 0
+            setFiltersVisible(true)
             return
         }
+        if (dy == 0) return
+        if ((dy > 0) != (scrollAccumulator > 0)) scrollAccumulator = 0
+        scrollAccumulator += dy
+        when {
+            scrollAccumulator < -dp(24) -> setFiltersVisible(true)
+            scrollAccumulator > dp(48) -> setFiltersVisible(false)
+        }
+    }
 
-        val options = buildList {
-            add(getString(R.string.sticker_share_profile_iphone))
-            add(getString(R.string.sticker_share_profile_opaque))
-        }.toTypedArray()
+    private var filtersShown = true
+
+    private fun setFiltersVisible(visible: Boolean) {
+        if (filtersShown == visible) return
+        filtersShown = visible
+        filterBlock.animate().cancel()
+        if (visible) {
+            filterBlock.visibility = View.VISIBLE
+            filterBlock.animate().translationY(0f).setDuration(FILTER_ANIMATION_MS).start()
+        } else {
+            filterBlock.animate()
+                .translationY(-filterBlock.height.toFloat())
+                .setDuration(FILTER_ANIMATION_MS)
+                .withEndAction { if (!filtersShown) filterBlock.visibility = View.INVISIBLE }
+                .start()
+        }
+    }
+
+    private fun showSortMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        val current = prefs.sort
+        LibrarySort.values().forEachIndexed { index, option ->
+            menu.menu.add(1, index, index, option.label).apply {
+                isCheckable = true
+                isChecked = option == current
+            }
+        }
+        menu.menu.setGroupCheckable(1, true, true)
+        menu.setOnMenuItemClickListener { item ->
+            prefs.sort = LibrarySort.values()[item.itemId]
+            applyView(scrollToTop = true)
+            true
+        }
+        menu.show()
+    }
+
+    private fun updateChrome() {
+        normalBar.visibility = if (selectionActive) View.GONE else View.VISIBLE
+        selectionBar.visibility = if (selectionActive) View.VISIBLE else View.GONE
+        bulkBar.visibility = if (selectionActive) View.VISIBLE else View.GONE
+        createStickerButton.visibility = if (selectionActive) View.GONE else View.VISIBLE
+        selectionTitle.text = "${selectedIds.size} đã chọn"
+        val selected = allAssets.filter { it.id in selectedIds }
+        val allFavorite = selected.isNotEmpty() && selected.all(Asset::favorite)
+        bulkFavorite.text = if (allFavorite) "Bỏ yêu thích" else "Yêu thích"
+        bulkFavorite.setCompoundDrawablesRelative(null, getDrawable(
+            if (allFavorite) R.drawable.ic_star else R.drawable.ic_star_border,
+        )?.mutate()?.apply {
+            setTint(if (allFavorite) mvFavorite else mvText)
+            setBounds(0, 0, dp(22), dp(22))
+        }, null, null)
+        densityButton.contentDescription = "Mật độ lưới: ${gridLayout.spanCount} cột. Chạm để đổi"
+        updateBackCallback()
+    }
+
+    // endregion
+
+    // region Selection and bulk actions
+
+    private fun onTileClick(asset: Asset) {
+        if (selectionActive) toggleSelection(asset) else openDetail(asset)
+    }
+
+    private fun onTileLongClick(asset: Asset) {
+        recycler.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        if (!selectionActive) {
+            selectionActive = true
+            selectedIds.clear()
+            selectedIds.add(asset.id)
+            hideKeyboard()
+            adapter.notifySelectionChanged()
+            updateChrome()
+        } else {
+            toggleSelection(asset)
+        }
+    }
+
+    private fun toggleSelection(asset: Asset) {
+        if (!selectedIds.add(asset.id)) selectedIds.remove(asset.id)
+        if (selectedIds.isEmpty()) {
+            exitSelection()
+            return
+        }
+        adapter.notifySelectionChanged(asset.id)
+        updateChrome()
+    }
+
+    private fun selectAllVisible() {
+        selectedIds.addAll(adapter.currentList.map { it.id })
+        adapter.notifySelectionChanged()
+        updateChrome()
+    }
+
+    private fun exitSelection() {
+        if (!selectionActive) return
+        selectionActive = false
+        selectedIds.clear()
+        adapter.notifySelectionChanged()
+        updateChrome()
+    }
+
+    private fun bulkToggleFavorite() {
+        val ids = selectedIds.toList()
+        val makeFavorite = !allAssets.filter { it.id in selectedIds }.all(Asset::favorite)
+        exitSelection()
+        runDb {
+            val changed = repository.setFavorite(ids, makeFavorite)
+            runOnUi {
+                refresh()
+                showMessage(if (makeFavorite) "Đã thêm $changed mục vào Yêu thích" else "Đã bỏ yêu thích $changed mục")
+            }
+        }
+    }
+
+    private fun showBulkTagSheet() {
+        val ids = selectedIds.toList()
+        val sheet = MvSheet(root, "Gắn tag cho ${ids.size} mục")
+        val input = EditText(this).apply {
+            hint = "Nhập tag, phân tách bằng dấu phẩy"
+            setSingleLine(true)
+            textSize = 15f
+            setTextColor(mvText)
+            setHintTextColor(mvMuted)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setPadding(dp(12), 0, dp(12), 0)
+            background = roundedBackground(mvSurface, MV_RADIUS, mvLine)
+            contentDescription = "Tag cần gắn"
+        }
+        sheet.body.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)))
+        val suggestions = topTags(10)
+        if (suggestions.isNotEmpty()) {
+            sheet.body.addView(mvSectionLabel("TAG ĐANG DÙNG"), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { setMargins(0, dp(14), 0, dp(4)) })
+            val flow = FlowLayout(this)
+            suggestions.forEach { tag ->
+                val chip = mvChip(tag.label) {
+                    val existing = input.text.toString().split(',').map(String::trim).filter(String::isNotEmpty)
+                    input.setText((existing + tag.label).distinct().joinToString(", "))
+                    input.setSelection(input.text.length)
+                }
+                chip.styleMvChip(false)
+                flow.addView(chip, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(MV_TOUCH)))
+            }
+            sheet.body.addView(flow)
+        }
+        lateinit var apply: Button
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                apply.performClick()
+                true
+            } else {
+                false
+            }
+        }
+        apply = mvButton("Gắn tag", {
+            val tags = input.text.toString().split(',')
+            if (TagNormalizer.normalizeAll(tags).isEmpty()) {
+                input.error = "Nhập ít nhất một tag"
+            } else {
+                hideKeyboard()
+                sheet.close()
+                exitSelection()
+                runDb {
+                    val changed = repository.addTags(ids, tags)
+                    runOnUi {
+                        refresh()
+                        showMessage("Đã gắn tag cho $changed mục")
+                    }
+                }
+            }
+        }, primary = true)
+        sheet.body.addView(apply, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)).apply {
+            topMargin = dp(16)
+        })
+        openSheet(sheet)
+        input.requestFocus()
+        getSystemService(InputMethodManager::class.java)?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    /**
+     * Deletion is staged: items disappear immediately, and the files are removed only when the
+     * Undo window closes (timeout, another message, or the activity stopping).
+     */
+    internal fun requestDelete(assets: List<Asset>) {
+        if (assets.isEmpty()) return
+        val ids = assets.map { it.id }
+        if (detail?.asset?.id in ids) closeDetail()
+        pendingDeletion.addAll(ids)
+        exitSelection()
+        applyView()
+        // Stickers made from a deleted source stay in the library but lose re-editing; say so.
+        val derivedKept = allAssets.count { it.sourceAssetId in ids && it.id !in ids }
+        val message = buildString {
+            append(if (assets.size == 1) "Đã xoá “${assets.first().displayName}”" else "Đã xoá ${assets.size} mục")
+            if (derivedKept > 0) append(" · giữ $derivedKept sticker dẫn xuất")
+        }
+        snackbar.show(
+            text = message,
+            actionLabel = "Hoàn tác",
+            durationMs = UNDO_WINDOW_MS,
+            onAction = {
+                pendingDeletion.removeAll(ids.toSet())
+                applyView()
+            },
+            onDismissed = { commitDeletion(ids) },
+        )
+    }
+
+    private fun commitDeletion(ids: List<String>) {
+        runDb {
+            val result = repository.delete(ids)
+            runOnUiThread {
+                pendingDeletion.removeAll(ids.toSet())
+                if (isUiUnavailable()) return@runOnUiThread
+                refresh()
+                if (result.failedIds.isNotEmpty()) {
+                    showMessage("Không xoá được ${result.failedIds.size} mục. Hãy thử lại.")
+                }
+            }
+        }
+    }
+
+    // endregion
+
+    // region Detail, sheets and back navigation
+
+    private fun openDetail(asset: Asset) {
+        if (detail != null) return
+        hideKeyboard()
+        detail = AssetDetailPanel(this, root, asset).also { it.show() }
+        snackbar.view.bringToFront()
+        updateBackCallback()
+    }
+
+    internal fun closeDetail() {
+        detail?.close()
+        detail = null
+        updateBackCallback()
+    }
+
+    internal fun onAssetChanged(asset: Asset) {
+        allAssets = allAssets.map { if (it.id == asset.id) asset else it }
+        applyView()
+    }
+
+    internal fun topTags(limit: Int): List<TagCount> = LibraryView.topTags(allAssets, limit, pendingDeletion)
+
+    private fun openSheet(next: MvSheet) {
+        sheet?.close()
+        sheet = next
+        next.show {
+            if (sheet === next) sheet = null
+            updateBackCallback()
+        }
+        snackbar.view.bringToFront()
+        updateBackCallback()
+    }
+
+    private fun handleBack(): Boolean {
+        when {
+            sheet?.isShowing == true -> sheet?.close()
+            detail != null -> closeDetail()
+            selectionActive -> exitSelection()
+            else -> return false
+        }
+        return true
+    }
+
+    private fun updateBackCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val needed = sheet?.isShowing == true || detail != null || selectionActive
+        val current = backCallback
+        if (needed && current == null) {
+            val callback = OnBackInvokedCallback { handleBack() }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+            backCallback = callback
+        } else if (!needed && current != null) {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(current)
+            backCallback = null
+        }
+    }
+
+    // Fallback for API 26–32 only. API 33+ (including predictive back on API 36) is handled by
+    // the OnBackInvokedCallback registered in updateBackCallback(), so gestures are covered.
+    @SuppressLint("GestureBackNavigation")
+    @Deprecated("Used below Android 13; newer versions route back through OnBackInvokedCallback.")
+    override fun onBackPressed() {
+        if (!handleBack()) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
+    }
+
+    // endregion
+
+    // region Share, export and studio
+
+    internal fun shareAsset(asset: Asset) {
+        markUsed(asset.id)
+        ShareManager.share(this, repository, asset, Destination.SYSTEM, shareExecutor, ::showMessage)
+    }
+
+    internal fun copyAsset(asset: Asset) {
+        markUsed(asset.id)
+        ShareManager.copy(this, repository, asset, shareExecutor, ::showMessage, ::showMessage)
+    }
+
+    internal fun shareAnimatedSticker(asset: Asset) {
+        markUsed(asset.id)
+        ShareManager.shareAnimatedSticker(this, repository, asset, shareExecutor, ::showMessage)
+    }
+
+    /**
+     * Experimental host routes. Sticker hosts expose no stable native-sticker contract, so the
+     * user picks the raster profile explicitly; the export format is never changed silently.
+     */
+    internal fun shareToHost(asset: Asset, destination: Destination) {
+        if (isUiUnavailable()) return
+        markUsed(asset.id)
+        if (!MediaPolicy.needsStickerCompatibilityProfile(asset, destination)) {
+            ShareManager.share(this, repository, asset, destination, shareExecutor, ::showMessage)
+            return
+        }
+        val options = arrayOf(
+            getString(R.string.sticker_share_profile_iphone),
+            getString(R.string.sticker_share_profile_opaque),
+        )
         AlertDialog.Builder(this)
             .setTitle(R.string.sticker_share_profile_title)
             .setItems(options) { _, which ->
-                val profile = if (which == 1) {
-                    StickerShareProfile.OPAQUE_512
-                } else {
-                    StickerShareProfile.TRANSPARENT_320
-                }
-                ShareManager.share(
-                    this,
-                    repository,
-                    asset,
-                    destination,
-                    shareExecutor,
-                    ::showError,
-                    profile,
-                )
+                val profile = if (which == 1) StickerShareProfile.OPAQUE_512 else StickerShareProfile.TRANSPARENT_320
+                ShareManager.share(this, repository, asset, destination, shareExecutor, ::showMessage, profile)
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
-    private fun toggleFavorite(asset: Asset) {
-        submitDbOperation {
-            repository.setFavorite(asset.id, !asset.favorite)
-            runOnUiThread { if (!isUiUnavailable()) refresh() }
+    internal fun openStickerStudio(source: Asset) {
+        // A derived sticker whose source was deleted stays sendable but cannot be re-edited.
+        if (source.type == AssetType.STICKER && source.sourceAssetId == null) {
+            runDb {
+                val sourceMissing = repository.findStickerRecipe(source.id) != null
+                runOnUi {
+                    if (sourceMissing) {
+                        showMessage(getString(R.string.sticker_source_missing_detail))
+                    } else {
+                        launchStickerStudio(source)
+                    }
+                }
+            }
+            return
         }
+        launchStickerStudio(source)
     }
 
-    private fun confirmDelete(asset: Asset, dialogToClose: Dialog? = null) {
-        submitDbOperation {
-            val derivedCount = repository.countDerivedAssets(asset.id)
-            runOnUiThread {
-                if (isUiUnavailable()) return@runOnUiThread
-                val message = if (derivedCount > 0) {
-                    getString(R.string.delete_asset_with_derived_message, asset.displayName, derivedCount)
-                } else {
-                    getString(R.string.delete_asset_message, asset.displayName)
-                }
-                AlertDialog.Builder(this)
-                    .setTitle(R.string.delete_asset_title)
-                    .setMessage(message)
-                    .setNegativeButton(R.string.cancel, null)
-                    .setPositiveButton(R.string.delete) { _, _ ->
-                        dialogToClose?.dismiss()
-                        submitDbOperation {
-                            val deleted = repository.delete(asset.id)
-                            runOnUiThread {
-                                if (isUiUnavailable()) return@runOnUiThread
-                                if (deleted) {
-                                    status.text = getString(R.string.asset_deleted)
-                                    refresh()
-                                } else {
-                                    showError(getString(R.string.delete_asset_failed))
-                                }
-                            }
-                        }
-                    }
-                    .show()
+    private fun launchStickerStudio(source: Asset) {
+        startActivity(Intent(this, StickerStudioActivity::class.java).apply {
+            if (source.type == AssetType.STICKER) {
+                putExtra(StickerStudioActivity.EXTRA_EDIT_STICKER_ASSET_ID, source.id)
+            } else {
+                putExtra(StickerStudioActivity.EXTRA_SOURCE_ASSET_ID, source.id)
             }
+            putExtra(StickerStudioActivity.EXTRA_QUICK_MODE, true)
+        })
+    }
+
+    private fun openAssetPicker() {
+        startActivity(Intent(this, AssetPickerActivity::class.java))
+    }
+
+    private fun markUsed(id: String) {
+        runDb { repository.touchUsed(id) }
+    }
+
+    // endregion
+
+    // region Import
+
+    private fun showImportMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        menu.menu.add(0, 0, 0, getString(R.string.import_from_device))
+        menu.menu.add(0, 1, 1, getString(R.string.import_from_tenor))
+        menu.setOnMenuItemClickListener { item ->
+            if (item.itemId == 0) openPicker() else showLinkImportSheet()
+            true
         }
+        menu.show()
     }
 
     private fun openPicker() {
+        @Suppress("DEPRECATION")
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
@@ -880,73 +1087,49 @@ class MainActivity : Activity() {
         }, REQUEST_PICK)
     }
 
-    private fun showImportOptions() {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.import_options_title)
-            .setItems(
-                arrayOf(
-                    getString(R.string.import_from_device),
-                    getString(R.string.import_from_tenor),
-                ),
-            ) { _, which ->
-                if (which == 0) openPicker() else showTenorImportDialog()
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
-    }
-
-    private fun showTenorImportDialog() {
-        val form = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(4), 0, dp(4), 0)
-        }
+    private fun showLinkImportSheet() {
+        val sheet = MvSheet(root, getString(R.string.tenor_import_title))
+        sheet.body.addView(TextView(this).apply {
+            text = getString(R.string.tenor_import_message)
+            applyMvTextStyle(13f, mvMuted, 5)
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(12)
+        })
         val input = EditText(this).apply {
             hint = getString(R.string.tenor_import_hint)
             setSingleLine(true)
             textSize = 14f
-            setTextColor(mvInk)
+            setTextColor(mvText)
             setHintTextColor(mvMuted)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_GO
+            setPadding(dp(12), 0, dp(12), 0)
+            background = roundedBackground(mvSurface, MV_RADIUS, mvLine)
             contentDescription = getString(R.string.import_from_tenor)
-            background = roundedBackground(mvSurface, radiusDp = 12, strokeColor = mvLine)
         }
-        form.addView(input, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(52),
-        ))
+        sheet.body.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)))
         val progress = TextView(this).apply {
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 2)
-            setPadding(dp(2), dp(8), dp(2), 0)
+            applyMvTextStyle(13f, mvMuted, 3)
             visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
         }
-        form.addView(progress, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ))
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.tenor_import_title)
-            .setMessage(R.string.tenor_import_message)
-            .setView(form)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.tenor_import_action, null)
-            .create()
-        dialog.setOnShowListener {
-            val action = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            action.setOnClickListener {
-                val rawUrl = input.text?.toString().orEmpty().trim()
-                val validation = TenorUrlPolicy.parse(rawUrl)
-                if (validation.isFailure) {
-                    input.error = validation.exceptionOrNull()?.message
-                        ?: getString(R.string.tenor_import_failed)
-                    return@setOnClickListener
-                }
-                action.isEnabled = false
-                input.isEnabled = false
-                progress.visibility = View.VISIBLE
-                progress.text = getString(R.string.tenor_import_loading)
-                statusIfReady(getString(R.string.tenor_import_loading))
-                submitDbOperation {
+        sheet.body.addView(progress)
+        lateinit var action: Button
+        val submit: () -> Unit = submit@{
+            val rawUrl = input.text?.toString().orEmpty().trim()
+            val validation = TenorUrlPolicy.parse(rawUrl)
+            if (validation.isFailure) {
+                input.error = validation.exceptionOrNull()?.message ?: getString(R.string.tenor_import_failed)
+                return@submit
+            }
+            action.isEnabled = false
+            input.isEnabled = false
+            progress.visibility = View.VISIBLE
+            progress.text = getString(R.string.tenor_import_loading)
+            progress.setTextColor(mvMuted)
+            runCatching {
+                networkExecutor.execute {
                     val outcome = runCatching {
                         val downloaded = TenorMediaDownloader().download(rawUrl, cacheDir)
                         try {
@@ -962,28 +1145,45 @@ class MainActivity : Activity() {
                     }.getOrElse { error ->
                         ImportOutcome(error = error.message ?: getString(R.string.tenor_import_failed))
                     }
-                    runOnUiThread {
-                        if (isUiUnavailable()) return@runOnUiThread
-                        val asset = outcome.asset
-                        if (asset != null) {
-                            dialog.dismiss()
-                            refresh()
-                            status.text = getString(R.string.tenor_import_saved)
-                            Toast.makeText(this, R.string.tenor_import_saved, Toast.LENGTH_SHORT).show()
+                    runOnUi {
+                        if (outcome.asset != null) {
+                            hideKeyboard()
+                            sheet.close()
+                            showImportResult(
+                                saved = if (outcome.duplicate) 0 else 1,
+                                duplicate = if (outcome.duplicate) 1 else 0,
+                                errors = 0,
+                            )
                         } else {
                             action.isEnabled = true
                             input.isEnabled = true
                             progress.text = outcome.error ?: getString(R.string.tenor_import_failed)
+                            progress.setTextColor(mvDanger)
                         }
                     }
                 }
             }
         }
-        dialog.show()
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO) {
+                submit()
+                true
+            } else {
+                false
+            }
+        }
+        action = mvButton(getString(R.string.tenor_import_action), { submit() }, primary = true, iconRes = R.drawable.ic_link)
+        sheet.body.addView(action, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)).apply {
+            topMargin = dp(16)
+        })
+        openSheet(sheet)
+        input.requestFocus()
+        getSystemService(InputMethodManager::class.java)?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Platform Activity result API; this app has no AndroidX Activity dependency.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (destroyed) return
         if (requestCode != REQUEST_PICK || resultCode != RESULT_OK || data == null) return
@@ -993,114 +1193,168 @@ class MainActivity : Activity() {
                 for (index in 0 until clip.itemCount) add(clip.getItemAt(index).uri)
             }
         }.distinct()
-        if (uris.isEmpty()) return
-        status.text = resources.getQuantityString(R.plurals.importing_media, uris.size, uris.size)
-        submitDbOperation {
-            val outcomes = repository.importUris(uris)
-            val saved = outcomes.count { it.asset != null && !it.duplicate }
-            val duplicate = outcomes.count { it.duplicate }
-            val errors = outcomes.mapNotNull { it.error }
-            runOnUiThread {
-                if (isUiUnavailable()) return@runOnUiThread
-                refresh()
-                val message = buildString {
-                    append("Đã lưu $saved")
-                    if (duplicate > 0) append(", trùng $duplicate")
-                    if (errors.isNotEmpty()) append(", lỗi ${errors.size}")
-                }
-                status.text = message
-                Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-            }
-        }
+        importUris(uris)
     }
 
     private fun handleIncomingIntent(incoming: Intent?) {
-        if (destroyed) return
         if (incoming?.action != Intent.ACTION_SEND && incoming?.action != Intent.ACTION_SEND_MULTIPLE) return
-        val uris = IntentMediaExtractor.uris(incoming)
+        importUris(IntentMediaExtractor.uris(incoming).filter { it.scheme == "content" })
+    }
+
+    private fun importUris(uris: List<Uri>) {
         if (uris.isEmpty()) return
-        statusIfReady(getString(R.string.importing_shared_media))
-        submitDbOperation {
+        snackbar.show(resources.getQuantityString(R.plurals.importing_media, uris.size, uris.size), durationMs = 60_000L)
+        runDb {
             val outcomes = repository.importUris(uris)
-            runOnUiThread {
-                if (isUiUnavailable()) return@runOnUiThread
-                refresh()
-                val errors = outcomes.count { it.error != null }
-                if (errors > 0) showError("Đã nhận media nhưng có $errors file lỗi")
+            runOnUi {
+                showImportResult(
+                    saved = outcomes.count { it.asset != null && !it.duplicate },
+                    duplicate = outcomes.count { it.duplicate },
+                    errors = outcomes.count { it.error != null },
+                )
             }
         }
     }
 
-    private fun statusIfReady(message: String) {
-        if (!destroyed && ::status.isInitialized) status.text = message
+    private fun showImportResult(saved: Int, duplicate: Int, errors: Int) {
+        val message = buildString {
+            append("Đã thêm $saved")
+            if (duplicate > 0) append(" · trùng $duplicate")
+            if (errors > 0) append(" · lỗi $errors")
+        }
+        if (saved > 0) {
+            // Show the new items where the user expects them: newest first, no filters.
+            snackbar.show(message, "Xem", 5_000L, onAction = {
+                prefs.sort = LibrarySort.ADDED
+                typeFilter = LibraryTypeFilter.ALL
+                tagScope = TagScope.Any
+                if (search.text?.isNotEmpty() == true) search.setText("") else applyView(scrollToTop = true)
+            })
+        } else {
+            showMessage(message)
+        }
+        refresh()
     }
 
-    private fun openKeyboardSettings() {
-        startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+    // endregion
+
+    // region Overflow: stats, keyboard, experimental tools
+
+    private fun showOverflowMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        menu.menu.add(0, 0, 0, "Thống kê kho")
+        menu.menu.add(0, 1, 1, "Bàn phím MemeVault")
+        menu.menu.add(0, 2, 2, "Đồng bộ Zalo (thử nghiệm)")
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                0 -> showStatsSheet()
+                1 -> startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                2 -> startActivity(Intent(this, ZaloSyncActivity::class.java))
+            }
+            true
+        }
+        menu.show()
     }
 
-    private fun openAssetPicker() {
-        startActivity(Intent(this, AssetPickerActivity::class.java))
-    }
-
-    private fun openStickerStudio(source: Asset? = null) {
-        // A derived sticker whose source was deleted remains sendable, but must not be opened
-        // as if its missing source could be reconstructed. Resolve the recipe off the UI thread
-        // so manually imported STICKER images without a recipe can still be used as sources.
-        if (source?.type == AssetType.STICKER && source.sourceAssetId == null) {
-            submitDbOperation {
-                val sourceMissing = repository.findStickerRecipe(source.id) != null
-                runOnUiThread {
-                    if (isUiUnavailable()) return@runOnUiThread
-                    if (sourceMissing) {
-                        showError(getString(R.string.sticker_source_missing_detail))
-                    } else {
-                        launchStickerStudio(source)
+    private fun showStatsSheet() {
+        val sheet = MvSheet(root, "Thống kê kho")
+        val table = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBackground(mvSurface, MV_RADIUS, mvLine)
+        }
+        table.addView(TextView(this).apply {
+            text = "Đang tính dung lượng…"
+            applyMvTextStyle(13f, mvMuted, 1)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        })
+        sheet.body.addView(table)
+        val shortcuts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        shortcuts.addView(mvButton("Xem mục ít dùng", {
+            sheet.close()
+            prefs.sort = LibrarySort.LEAST_USED
+            typeFilter = LibraryTypeFilter.ALL
+            applyView(scrollToTop = true)
+        }), LinearLayout.LayoutParams(0, dp(MV_TOUCH), 1f))
+        shortcuts.addView(mvButton("Xem mục chưa có tag", {
+            sheet.close()
+            tagScope = TagScope.Untagged
+            applyView(scrollToTop = true)
+        }), LinearLayout.LayoutParams(0, dp(MV_TOUCH), 1f).apply { marginStart = dp(8) })
+        sheet.body.addView(shortcuts, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(MV_TOUCH)).apply {
+            topMargin = dp(12)
+        })
+        openSheet(sheet)
+        runDb {
+            val stats = runCatching { repository.stats() }
+            runOnUi {
+                table.removeAllViews()
+                stats.onSuccess { value ->
+                    val rows = buildList {
+                        add("Tổng" to "${value.totalCount} mục · ${ByteFormat.format(value.originalBytes)}")
+                        listOf(AssetType.MEME, AssetType.STICKER, AssetType.GIF, AssetType.VIDEO).forEach { type ->
+                            val typeStats = value.byType[type]
+                            add(type.label to "${typeStats?.count ?: 0} · ${ByteFormat.format(typeStats?.bytes ?: 0L)}")
+                        }
+                        add("Yêu thích" to "${value.favoriteCount}")
+                        add("Chưa dùng lần nào" to "${value.neverUsedCount}")
+                        add("Đã gắn tag" to "${value.taggedCount} / ${value.totalCount}")
+                        add("Bộ nhớ đệm chia sẻ" to ByteFormat.format(value.variantBytes))
+                        add("Mask sticker" to ByteFormat.format(value.maskBytes))
                     }
+                    rows.forEachIndexed { index, (label, data) ->
+                        if (index > 0) table.addView(mvDivider(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+                        table.addView(statsRow(label, data), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+                    }
+                }.onFailure { error ->
+                    table.addView(TextView(this).apply {
+                        text = error.message ?: "Không tính được thống kê"
+                        applyMvTextStyle(13f, mvDanger, 3)
+                        setPadding(dp(12), dp(12), dp(12), dp(12))
+                    })
                 }
             }
-            return
         }
-        launchStickerStudio(source)
     }
 
-    private fun launchStickerStudio(source: Asset?) {
-        startActivity(Intent(this, StickerStudioActivity::class.java).apply {
-            if (source?.type == AssetType.STICKER) {
-                putExtra(StickerStudioActivity.EXTRA_EDIT_STICKER_ASSET_ID, source.id)
-            } else {
-                source?.id?.let { putExtra(StickerStudioActivity.EXTRA_SOURCE_ASSET_ID, it) }
-            }
-            if (source != null) putExtra(StickerStudioActivity.EXTRA_QUICK_MODE, true)
+    private fun statsRow(label: String, value: String): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(12), 0, dp(12), 0)
+        addView(TextView(this@MainActivity).apply {
+            text = label
+            applyMvTextStyle(13f, mvMuted, 1)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(TextView(this@MainActivity).apply {
+            text = value
+            applyMvMonoStyle(13f, mvText)
         })
     }
 
-    private fun showHelpDialog() {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.library_more_title)
-            .setMessage(R.string.library_more_message)
-            .setPositiveButton(R.string.open_keyboard_settings) { _, _ -> openKeyboardSettings() }
-            .setNeutralButton(R.string.zalo_sync_action) { _, _ -> openZaloSync() }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+    // endregion
+
+    // region Infrastructure
+
+    internal fun showMessage(message: String) {
+        if (isUiUnavailable()) return
+        snackbar.show(message)
     }
 
-    private fun openZaloSync() {
-        startActivity(Intent(this, ZaloSyncActivity::class.java))
+    /** DB work is never dropped on destroy: queued writes (e.g. staged deletions) still commit. */
+    internal fun runDb(operation: () -> Unit) {
+        runCatching { dbExecutor.execute(operation) }
     }
 
-    private fun assetMetadata(asset: Asset): String = buildString {
-        append(asset.type.label)
-        append(" • ")
-        append(asset.mimeType)
-        if (asset.width > 0 && asset.height > 0) append(" • ${asset.width}×${asset.height}")
-        if (asset.durationMs > 0) append(" • ${asset.durationMs / 1000}s")
-        if (asset.useCount > 0) append(" • dùng ${asset.useCount} lần")
-        if (asset.tags.isNotEmpty()) append(" • #${asset.tags.joinToString(" #")}")
+    internal fun runPreview(operation: () -> Unit): Future<*>? =
+        runCatching { previewExecutor.submit(operation) }.getOrNull()
+
+    internal fun runOnUi(block: () -> Unit) {
+        runOnUiThread { if (!isUiUnavailable()) block() }
     }
 
-    private fun markUsed(id: String) {
-        submitDbOperation { repository.touchUsed(id) }
+    internal fun isUiUnavailable(): Boolean = destroyed || isFinishing || isDestroyed
+
+    private fun hideKeyboard() {
+        getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(root.windowToken, 0)
     }
 
     private fun configureSystemBars() {
@@ -1108,12 +1362,13 @@ class MainActivity : Activity() {
             android.content.res.Configuration.UI_MODE_NIGHT_YES
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(false)
+            @Suppress("DEPRECATION")
             window.statusBarColor = Color.TRANSPARENT
+            @Suppress("DEPRECATION")
             window.navigationBarColor = Color.TRANSPARENT
             window.isNavigationBarContrastEnforced = false
-            // Access through the decor view: Activity.onCreate runs before PhoneWindow has
-            // initialized its cached InsetsController, so window.insetsController can throw
-            // on Android 11+ when this is called before setContentView.
+            // Access through the decor view: window.insetsController can throw before
+            // setContentView on Android 11+.
             val lightBarFlags = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
                 WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             window.decorView.windowInsetsController?.setSystemBarsAppearance(
@@ -1123,97 +1378,48 @@ class MainActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             run {
-                window.statusBarColor = mvPaper
-                window.navigationBarColor = mvPaper
+                window.statusBarColor = mvBackground
+                window.navigationBarColor = mvBackground
                 window.decorView.systemUiVisibility = if (night) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
             }
         }
     }
 
-    private fun applySystemBarInsets(root: View) {
-        val baseLeft = dp(16)
-        val baseTop = dp(8)
-        val baseRight = dp(16)
-        val baseBottom = dp(8)
-        root.setOnApplyWindowInsetsListener { view, insets ->
+    /** Pads the root by system bars and the soft keyboard so inputs and sheets stay visible. */
+    private fun applySystemBarInsets(view: View) {
+        view.setOnApplyWindowInsetsListener { target, insets ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                view.setPadding(
-                    baseLeft + bars.left,
-                    baseTop + bars.top,
-                    baseRight + bars.right,
-                    baseBottom + bars.bottom,
-                )
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+                target.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             } else {
                 @Suppress("DEPRECATION")
-                view.setPadding(
-                    baseLeft + insets.systemWindowInsetLeft,
-                    baseTop + insets.systemWindowInsetTop,
-                    baseRight + insets.systemWindowInsetRight,
-                    baseBottom + insets.systemWindowInsetBottom,
+                target.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom,
                 )
             }
             insets
         }
-        root.requestApplyInsets()
+        view.requestApplyInsets()
     }
-
-    private fun showError(message: String) {
-        if (isUiUnavailable()) return
-        if (::status.isInitialized) status.text = message
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
-
-    private fun showTagSuggestions(input: EditText) {
-        val prefix = input.text?.toString()?.substringAfterLast(',')?.trim().orEmpty()
-        submitDbOperation {
-            val suggestions = repository.suggestTags(prefix)
-            runOnUiThread {
-                if (isUiUnavailable()) return@runOnUiThread
-                if (suggestions.isEmpty()) {
-                    Toast.makeText(this, R.string.asset_tags_no_suggestions, Toast.LENGTH_SHORT).show()
-                    return@runOnUiThread
-                }
-                AlertDialog.Builder(this)
-                    .setTitle(R.string.asset_tags_suggest_title)
-                    .setItems(suggestions.map { "${it.name} (${it.usageCount})" }.toTypedArray()) { dialog, which ->
-                        val existing = input.text.toString().split(',').map(String::trim).filter(String::isNotEmpty)
-                        val next = TagNormalizer.normalizeAll(existing + suggestions[which].name)
-                            .joinToString(", ") { it.displayName }
-                        input.setText("$next, ")
-                        input.setSelection(input.text.length)
-                        dialog.dismiss()
-                    }
-                    .setNegativeButton(R.string.cancel, null)
-                    .show()
-            }
-        }
-    }
-
-    private fun isUiUnavailable(): Boolean = destroyed || isFinishing || isDestroyed
-
-    private fun submitDbOperation(operation: () -> Unit) {
-        if (destroyed) return
-        runCatching {
-            executor.execute task@{
-                if (destroyed) return@task
-                operation()
-            }
-        }
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
         destroyed = true
         refreshGeneration++
-        pendingSearch?.let(searchHandler::removeCallbacks)
-        executor.shutdown()
+        pendingSearch?.let(mainHandler::removeCallbacks)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            backCallback?.let(onBackInvokedDispatcher::unregisterOnBackInvokedCallback)
+        }
+        dbExecutor.shutdown()
         shareExecutor.shutdownNow()
+        networkExecutor.shutdownNow()
         previewExecutor.shutdownNow()
         Thread {
-            runCatching { executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS) }
+            runCatching { dbExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS) }
             runCatching { shareExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS) }
+            runCatching { networkExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS) }
             runCatching { repository.close() }
         }.apply {
             name = "MemeVault-repository-close"
@@ -1223,191 +1429,20 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    private enum class SortOrder(val label: String, val comparator: Comparator<Asset>) {
-        RECENT("Mới nhất", compareByDescending { it.lastUsedAt ?: it.createdAt }),
-        MOST_USED("Dùng nhiều", compareByDescending<Asset> { it.useCount }
-            .thenByDescending { it.lastUsedAt ?: it.createdAt }),
-        NAME("Tên A–Z", compareBy { it.displayName.lowercase() }),
-    }
-
-    private class AssetAdapter(
-        private val context: MainActivity,
-        private val previewExecutor: ExecutorService,
-        private val previewHandler: Handler,
-        private val onOpen: (Asset) -> Unit,
-        private val onFavorite: (Asset) -> Unit,
-        private val onMore: (Asset) -> Unit,
-        private val onCreateSticker: (Asset) -> Unit,
-    ) : ListAdapter<Asset, AssetAdapter.Holder>(DIFF) {
-        init {
-            setHasStableIds(true)
-        }
-
-        fun submit(next: List<Asset>) = submitList(next)
-
-        override fun getItemId(position: Int): Long = getItem(position).id.hashCode().toLong()
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-            val card = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(context.dp(8), context.dp(8), context.dp(8), context.dp(8))
-                background = context.roundedBackground(context.mvSurface, radiusDp = 20, strokeColor = context.mvLine)
-                isClickable = true
-                isFocusable = true
-                layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply {
-                    setMargins(context.dp(4), context.dp(4), context.dp(4), context.dp(4))
-                }
-            }
-            val mediaFrame = FrameLayout(context)
-            val preview = ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(context.mvPaperDeep)
-            }
-            mediaFrame.addView(preview, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.dp(154),
-            ))
-            val badge = TextView(context).apply {
-                applyMvTextStyle(11f, Color.WHITE, 1)
-                gravity = Gravity.CENTER
-                setPadding(context.dp(8), 0, context.dp(8), 0)
-                background = context.roundedBackground(
-                    Color.argb(205, Color.red(context.mvInk), Color.green(context.mvInk), Color.blue(context.mvInk)),
-                    radiusDp = 10,
-                )
-            }
-            mediaFrame.addView(badge, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                context.dp(26),
-                Gravity.BOTTOM or Gravity.START,
-            ).apply { leftMargin = context.dp(8); bottomMargin = context.dp(8) })
-            val topActions = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.END
-            }
-            val favorite = context.mvIconButton("☆", "Đánh dấu yêu thích", {})
-            val create = context.mvIconButton("✦", "Tạo sticker từ media", {})
-            val more = context.mvIconButton("⋮", "Thêm hành động", {})
-            topActions.addView(favorite, LinearLayout.LayoutParams(context.dp(48), context.dp(48)))
-            topActions.addView(create, LinearLayout.LayoutParams(context.dp(48), context.dp(48)).apply {
-                marginStart = context.dp(4)
-            })
-            topActions.addView(more, LinearLayout.LayoutParams(context.dp(48), context.dp(48)).apply {
-                marginStart = context.dp(4)
-            })
-            mediaFrame.addView(topActions, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                context.dp(48),
-                Gravity.TOP or Gravity.END,
-            ).apply { topMargin = context.dp(4); rightMargin = context.dp(4) })
-            card.addView(mediaFrame, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.dp(154),
-            ))
-            val name = TextView(context).apply {
-                applyMvTextStyle(14f, Color.rgb(23, 32, 51), 2)
-                setPadding(0, context.dp(8), 0, 0)
-            }
-            card.addView(name, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-            val metadata = TextView(context).apply {
-                applyMvTextStyle(11f, Color.rgb(91, 101, 124), 1)
-                setPadding(0, context.dp(4), 0, context.dp(2))
-            }
-            card.addView(metadata)
-            return Holder(card, preview, badge, name, metadata, favorite, create, more)
-        }
-
-        override fun onBindViewHolder(holder: Holder, position: Int) {
-            holder.bind(getItem(position))
-        }
-
-        override fun onViewRecycled(holder: Holder) {
-            holder.preview.tag = null
-            holder.preview.setImageDrawable(null)
-            super.onViewRecycled(holder)
-        }
-
-        inner class Holder(
-            private val card: LinearLayout,
-            val preview: ImageView,
-            private val badge: TextView,
-            private val name: TextView,
-            private val metadata: TextView,
-            private val favorite: TextView,
-            private val create: TextView,
-            private val more: TextView,
-        ) : RecyclerView.ViewHolder(card) {
-            fun bind(asset: Asset) {
-                card.tag = asset
-                favorite.tag = asset
-                create.tag = asset
-                more.tag = asset
-                card.contentDescription = "Mở ${asset.displayName}"
-                favorite.text = if (asset.favorite) "★" else "☆"
-                favorite.contentDescription = if (asset.favorite) {
-                    "Bỏ yêu thích ${asset.displayName}"
-                } else {
-                    "Đánh dấu yêu thích ${asset.displayName}"
-                }
-                favorite.setOnClickListener { (it.tag as? Asset)?.let(onFavorite) }
-                create.setOnClickListener { (it.tag as? Asset)?.let(onCreateSticker) }
-                more.setOnClickListener { (it.tag as? Asset)?.let(onMore) }
-                card.setOnClickListener { (it.tag as? Asset)?.let(onOpen) }
-                badge.text = buildString {
-                    append(asset.type.label)
-                    if (asset.durationMs > 0) append(" • ${asset.durationMs / 1000}s")
-                }
-                name.text = asset.displayName
-                metadata.text = buildString {
-                    if (asset.width > 0 && asset.height > 0) append("${asset.width}×${asset.height}")
-                    if (asset.useCount > 0) append(if (isNotEmpty()) " • " else "")
-                    if (asset.useCount > 0) append("dùng ${asset.useCount}")
-                    if (isEmpty()) append(asset.mimeType)
-                }
-                preview.tag = asset.id
-                preview.setImageDrawable(null)
-                preview.scaleType = if (asset.type == AssetType.STICKER) {
-                    ImageView.ScaleType.CENTER_INSIDE
-                } else {
-                    ImageView.ScaleType.CENTER_CROP
-                }
-                preview.background = if (asset.type == AssetType.STICKER) {
-                    CheckerboardDrawable(context.dp(10), context)
-                } else {
-                    context.roundedBackground(context.mvPaperDeep, radiusDp = 14)
-                }
-                val target = context.dp(220)
-                previewExecutor.execute {
-                    val bitmap = MediaPreviewLoader.decode(File(asset.originalPath), asset.mimeType, target)
-                    previewHandler.post {
-                        if (!context.isUiUnavailable() && preview.tag == asset.id && bitmap != null) {
-                            preview.setImageBitmap(bitmap)
-                        }
-                    }
-                }
-            }
-        }
-
-        companion object {
-            private val DIFF = object : DiffUtil.ItemCallback<Asset>() {
-                override fun areItemsTheSame(oldItem: Asset, newItem: Asset): Boolean = oldItem.id == newItem.id
-                override fun areContentsTheSame(oldItem: Asset, newItem: Asset): Boolean = oldItem == newItem
-            }
-        }
-    }
+    // endregion
 
     companion object {
         private const val REQUEST_PICK = 1001
-        private const val COLUMN_COUNT = 2
         private const val KEY_QUERY = "library_query"
-        private const val KEY_FILTER = "library_filter"
-        private const val KEY_SORT = "library_sort"
+        private const val KEY_TYPE = "library_type"
+        private const val KEY_TAG_SCOPE = "library_tag_scope"
+        private const val KEY_TAG_LABEL = "library_tag_label"
+        private const val KEY_SELECTION = "library_selection"
+        private const val KEY_DETAIL = "library_detail"
+        private const val SCOPE_UNTAGGED = "\u0000untagged"
         private const val SEARCH_DEBOUNCE_MS = 180L
+        private const val UNDO_WINDOW_MS = 8_000L
+        private const val TAG_STRIP_LIMIT = 20
+        private const val FILTER_ANIMATION_MS = 160L
     }
 }

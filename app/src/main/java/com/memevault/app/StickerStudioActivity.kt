@@ -184,7 +184,7 @@ class StickerStudioActivity : Activity() {
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(mvPaper)
+            setBackgroundColor(mvBackground)
             setPadding(0, dp(8), 0, dp(18))
         }
         applySystemBarInsets(root)
@@ -194,13 +194,13 @@ class StickerStudioActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(mvIconButton("‹", getString(R.string.back), {
+        header.addView(mvIconButton(R.drawable.ic_arrow_back, getString(R.string.back), {
             if (savedAsset != null) finishWithResult() else finish()
         }),
             LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(TextView(this).apply {
             text = getString(R.string.sticker_studio_title)
-            applyMvTextStyle(22f, Color.rgb(23, 32, 51), 1)
+            applyMvTextStyle(22f, context.mvText, 1)
             setPadding(dp(10), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         cancelButton = mvButton(getString(R.string.cancel), { cancelProcessing() })
@@ -209,15 +209,15 @@ class StickerStudioActivity : Activity() {
         root.addView(header)
         root.addView(TextView(this).apply {
             text = getString(R.string.sticker_studio_subtitle)
-            applyMvTextStyle(13f, Color.rgb(91, 101, 124), 3)
+            applyMvTextStyle(13f, context.mvMuted, 3)
             setPadding(dp(58), 0, 0, dp(10))
         })
 
         status = TextView(this).apply {
             text = getString(R.string.sticker_studio_choose_hint)
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 3)
+            applyMvTextStyle(13f, context.mvText, 3)
             setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = roundedBackground(mvColor(R.color.mv_tag_surface), radiusDp = 16)
+            background = roundedBackground(mvColor(R.color.mv_accent_soft), radiusDp = 6)
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         root.addView(status, LinearLayout.LayoutParams(
@@ -250,7 +250,7 @@ class StickerStudioActivity : Activity() {
         previewTools.addView(compareButton, LinearLayout.LayoutParams(0, dp(48), 1f))
         previewTools.addView(TextView(this).apply {
             text = getString(R.string.sticker_compare_hint)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 3)
+            applyMvTextStyle(12f, context.mvMuted, 3)
             setPadding(dp(10), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         root.addView(previewTools)
@@ -280,10 +280,10 @@ class StickerStudioActivity : Activity() {
         val thresholdCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(8))
-            background = roundedBackground(mvSurface, radiusDp = 18, strokeColor = mvLine)
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
         }
         thresholdLabel = TextView(this).apply {
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 1)
+            applyMvTextStyle(13f, context.mvText, 1)
         }
         thresholdCard.addView(thresholdLabel)
         thresholdSeekBar = SeekBar(this).apply {
@@ -318,10 +318,10 @@ class StickerStudioActivity : Activity() {
         val borderCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(8))
-            background = roundedBackground(mvSurface, radiusDp = 18, strokeColor = mvLine)
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
         }
         borderLabel = TextView(this).apply {
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 1)
+            applyMvTextStyle(13f, context.mvText, 1)
         }
         borderCard.addView(borderLabel)
         val borderScroll = HorizontalScrollView(this).apply {
@@ -380,21 +380,21 @@ class StickerStudioActivity : Activity() {
         val tagsCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = roundedBackground(mvSurface, radiusDp = 18, strokeColor = mvLine)
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
         }
         tagsCard.addView(TextView(this).apply {
             text = getString(R.string.asset_tags_title)
-            applyMvTextStyle(13f, Color.rgb(35, 48, 75), 1)
+            applyMvTextStyle(13f, context.mvText, 1)
         })
         tagsInput = EditText(this).apply {
             hint = getString(R.string.asset_tags_hint)
             setSingleLine(true)
             textSize = 14f
-            setTextColor(mvInk)
+            setTextColor(mvText)
             setHintTextColor(mvMuted)
             contentDescription = getString(R.string.asset_tags_content_description)
             setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundedBackground(mvSurface, radiusDp = 12, strokeColor = mvLine)
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
         }
         tagsCard.addView(tagsInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -407,7 +407,7 @@ class StickerStudioActivity : Activity() {
         })
         tagsCard.addView(TextView(this).apply {
             text = getString(R.string.asset_tags_hint_detail)
-            applyMvTextStyle(11f, Color.rgb(91, 101, 124), 2)
+            applyMvTextStyle(11f, context.mvMuted, 2)
             setPadding(dp(2), dp(4), 0, 0)
         })
         root.addView(tagsCard, LinearLayout.LayoutParams(
@@ -448,7 +448,7 @@ class StickerStudioActivity : Activity() {
 
         root.addView(TextView(this).apply {
             text = getString(R.string.sticker_studio_privacy_note)
-            applyMvTextStyle(12f, Color.rgb(91, 101, 124), 3)
+            applyMvTextStyle(12f, context.mvMuted, 3)
             setPadding(0, dp(14), 0, 0)
         })
         setContentView(scroll)
@@ -790,7 +790,7 @@ class StickerStudioActivity : Activity() {
             ))
             addView(TextView(this@StickerStudioActivity).apply {
                 text = getString(R.string.sticker_crop_hint)
-                applyMvTextStyle(12f, Color.rgb(91, 101, 124), 3)
+                applyMvTextStyle(12f, context.mvMuted, 3)
                 setPadding(0, dp(8), 0, dp(2))
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1071,7 +1071,7 @@ class StickerStudioActivity : Activity() {
 
     private fun copySticker() {
         val asset = savedAsset ?: return
-        ShareManager.copy(this, repository, asset) { showError(it) }
+        ShareManager.copy(this, repository, asset, executor, { showError(it) })
     }
 
     private fun finishWithResult() {
@@ -1364,11 +1364,11 @@ class StickerStudioActivity : Activity() {
                     getString(R.string.sticker_border_custom_content_description)
                 }
                 customColorButton.background = if (isCustom) {
-                    roundedBackground(borderColor!!, radiusDp = 15, strokeColor = mvPurple, strokeWidthDp = 3)
+                    roundedBackground(borderColor!!, radiusDp = 6, strokeColor = mvAccent, strokeWidthDp = 3)
                 } else {
-                    roundedBackground(mvSurface, radiusDp = 15, strokeColor = mvLine)
+                    roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
                 }
-                customColorButton.setTextColor(if (isCustom) readableTextColor(borderColor!!) else mvInk)
+                customColorButton.setTextColor(if (isCustom) readableTextColor(borderColor!!) else mvText)
             }
         }
     }
@@ -1380,7 +1380,7 @@ class StickerStudioActivity : Activity() {
             setColor(fill)
             setStroke(
                 dp(if (selected) 3 else 1),
-                if (selected) mvPurple else mvLine,
+                if (selected) mvAccent else mvLine,
             )
         }
         swatch.text = when {
@@ -1388,7 +1388,7 @@ class StickerStudioActivity : Activity() {
             selected -> "✓"
             else -> ""
         }
-        swatch.setTextColor(if (color == null) mvInk else readableTextColor(fill))
+        swatch.setTextColor(if (color == null) mvText else readableTextColor(fill))
     }
 
     private fun selectBorderColor(color: Int?, label: String) {
@@ -1451,7 +1451,7 @@ class StickerStudioActivity : Activity() {
 
     private fun readableTextColor(color: Int): Int {
         val luminance = (Color.red(color) * 299 + Color.green(color) * 587 + Color.blue(color) * 114) / 1000
-        return if (luminance >= 150) Color.rgb(35, 48, 75) else Color.WHITE
+        return if (luminance >= 150) Color.rgb(24, 24, 27) else Color.WHITE
     }
 
     private fun findBorderThicknessSeekBar(): SeekBar? {
@@ -1554,8 +1554,8 @@ class StickerStudioActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             run {
-                window.statusBarColor = mvPaper
-                window.navigationBarColor = mvPaper
+                window.statusBarColor = mvBackground
+                window.navigationBarColor = mvBackground
                 window.decorView.systemUiVisibility = if (night) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
             }
         }

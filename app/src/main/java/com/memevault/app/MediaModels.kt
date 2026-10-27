@@ -36,6 +36,7 @@ enum class AssetFilter {
     GIFS,
     STICKERS,
     MEMES,
+    VIDEOS,
 }
 
 enum class TagSource {
@@ -271,3 +272,80 @@ data class SharedAsset(
     val mimeType: String,
     val displayName: String,
 )
+
+/**
+ * User-visible asset names. Names travel to other apps as DISPLAY_NAME/EXTRA_TITLE, so path
+ * separators and control characters are stripped and the length is capped. Renaming keeps the
+ * original extension because recipients use it to recognise the media type.
+ */
+object DisplayNamePolicy {
+    const val MAX_LENGTH = 120
+
+    fun sanitize(raw: String?): String = raw.orEmpty()
+        .map { char -> if (char == '/' || char == '\\' || char.isISOControl()) '_' else char }
+        .joinToString("")
+        .trim()
+        .take(MAX_LENGTH)
+        .trim()
+
+    fun extensionOf(name: String): String =
+        name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 5 && it.all(Char::isLetterOrDigit) }
+            ?.let { ".$it" }
+            .orEmpty()
+
+    fun baseName(name: String): String {
+        val extension = extensionOf(name)
+        return if (extension.isEmpty()) name else name.dropLast(extension.length)
+    }
+
+    /** Returns the new display name, or null when the requested base name is blank. */
+    fun rename(current: String, requestedBase: String): String? {
+        val extension = extensionOf(current)
+        val cleaned = sanitize(requestedBase).let { base ->
+            if (extension.isNotEmpty() && base.endsWith(extension, ignoreCase = true)) {
+                base.dropLast(extension.length).trimEnd()
+            } else {
+                base
+            }
+        }
+        if (cleaned.isEmpty()) return null
+        return cleaned.take(MAX_LENGTH - extension.length) + extension
+    }
+}
+
+data class BulkResult(
+    val succeeded: Int,
+    val failedIds: List<String>,
+)
+
+data class TypeStats(
+    val count: Int,
+    val bytes: Long,
+)
+
+data class LibraryStats(
+    val totalCount: Int,
+    val originalBytes: Long,
+    val variantBytes: Long,
+    val maskBytes: Long,
+    val byType: Map<AssetType, TypeStats>,
+    val favoriteCount: Int,
+    val neverUsedCount: Int,
+    val taggedCount: Int,
+)
+
+/** Compact, locale-stable byte formatting for technical metadata (1 KB = 1024 B). */
+object ByteFormat {
+    fun format(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = listOf("KB", "MB", "GB")
+        var value = bytes / 1024.0
+        var unit = 0
+        while (value >= 1024 && unit < units.lastIndex) {
+            value /= 1024
+            unit++
+        }
+        val rounded = if (value >= 100) "%.0f" else "%.1f"
+        return String.format(Locale.US, rounded, value) + " " + units[unit]
+    }
+}

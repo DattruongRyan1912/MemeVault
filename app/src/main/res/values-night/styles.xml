@@ -1,12 +1,25 @@
 <resources>
-    <style name="Theme.MemeVault" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">@color/mv_purple</item>
-        <item name="android:colorControlActivated">@color/mv_purple_dark</item>
-        <item name="android:navigationBarColor">@color/mv_paper</item>
-        <item name="android:statusBarColor">@color/mv_paper</item>
-        <item name="android:textColorPrimary">@color/mv_ink</item>
+    <style name="Base.Theme.MemeVault" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">@color/mv_accent</item>
+        <item name="android:colorControlActivated">@color/mv_accent</item>
+        <item name="android:colorControlNormal">@color/mv_muted</item>
+        <item name="android:colorBackground">@color/mv_bg</item>
+        <item name="android:windowBackground">@color/mv_bg</item>
+        <item name="android:navigationBarColor">@color/mv_bg</item>
+        <item name="android:statusBarColor">@color/mv_bg</item>
+        <item name="android:textColorPrimary">@color/mv_text</item>
+        <item name="android:textColorSecondary">@color/mv_muted</item>
+        <item name="android:textColorHint">@color/mv_muted</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/Theme.MemeVault.Dialog</item>
+    </style>
+
+    <style name="Theme.MemeVault.Dialog" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/mv_accent</item>
+        <item name="android:textColorPrimary">@color/mv_text</item>
+        <item name="android:textColorSecondary">@color/mv_muted</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
     </style>
 </resources>

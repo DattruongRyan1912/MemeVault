@@ -2,8 +2,8 @@ package com.memevault.app
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import java.util.concurrent.Executor
@@ -45,32 +45,21 @@ object ShareManager {
         } else {
             "Không thể tạo ảnh tương thích cho ${if (destination == Destination.ZALO) "Zalo" else "TikTok"}"
         }
-        if (needsPreparation) {
-            backgroundExecutor.execute {
-                runCatching { repository.sharedAsset(asset, destination, stickerProfile) }
-                    .onSuccess { shared ->
-                        activity.runOnUiThread {
-                            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
-                            launchChooser(activity, shared, destination)
-                        }
-                    }
-                    .onFailure { error ->
-                        activity.runOnUiThread {
-                            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
-                            onError(error.message ?: preparationError)
-                        }
-                    }
-            }
-        } else {
+        // sharedAsset() waits for storage reconciliation and may render a variant, so it never
+        // runs on the UI thread, even for the plain original.
+        val failureMessage = if (needsPreparation) preparationError else "Không thể chia sẻ media"
+        backgroundExecutor.execute {
             runCatching { repository.sharedAsset(asset, destination, stickerProfile) }
                 .onSuccess { shared ->
-                    if (!activity.isFinishing && !activity.isDestroyed) {
+                    activity.runOnUiThread {
+                        if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
                         launchChooser(activity, shared, destination)
                     }
                 }
                 .onFailure { error ->
-                    if (!activity.isFinishing && !activity.isDestroyed) {
-                        onError(error.message ?: "Không thể chia sẻ media")
+                    activity.runOnUiThread {
+                        if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+                        onError(error.message ?: failureMessage)
                     }
                 }
         }
@@ -120,16 +109,41 @@ object ShareManager {
         }
     }
 
-    fun copy(context: Context, repository: AssetRepository, asset: Asset, onError: (String) -> Unit) {
-        runCatching {
-            val shared = repository.sharedAsset(asset, Destination.SYSTEM)
-            val clipboard = context.getSystemService(ClipboardManager::class.java)
-                ?: error("Clipboard không khả dụng")
-            clipboard.setPrimaryClip(ClipData.newUri(context.contentResolver, shared.displayName, shared.uri))
-        }.onSuccess {
-            Toast.makeText(context, "Đã copy ${asset.displayName}", Toast.LENGTH_SHORT).show()
-        }.onFailure { error -> onError(error.message ?: "Không thể copy media") }
+    /**
+     * Copies the original through a content URI. The clip is built with the known MIME type:
+     * ClipData.newUri() would ask this app's own provider for the type on the calling thread,
+     * which touches Room on the main thread and can silently drop the image MIME.
+     */
+    fun copy(
+        activity: Activity,
+        repository: AssetRepository,
+        asset: Asset,
+        backgroundExecutor: Executor,
+        onError: (String) -> Unit,
+        onCopied: (String) -> Unit = { message ->
+            Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
+        },
+    ) {
+        if (activity.isFinishing || activity.isDestroyed) return
+        backgroundExecutor.execute {
+            val result = runCatching { repository.sharedAsset(asset, Destination.SYSTEM) }
+            activity.runOnUiThread {
+                if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+                result.mapCatching { shared ->
+                    val clipboard = activity.getSystemService(ClipboardManager::class.java)
+                        ?: error("Clipboard không khả dụng")
+                    clipboard.setPrimaryClip(clipFor(shared))
+                }.onSuccess {
+                    onCopied("Đã copy ${asset.displayName}")
+                }.onFailure { error -> onError(error.message ?: "Không thể copy media") }
+            }
+        }
     }
+
+    internal fun clipFor(shared: SharedAsset): ClipData = ClipData(
+        ClipDescription(shared.displayName, arrayOf(shared.mimeType)),
+        ClipData.Item(shared.uri),
+    )
 
     private fun launchChooser(
         activity: Activity,

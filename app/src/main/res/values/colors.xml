@@ -1,23 +1,25 @@
 <resources>
-    <!-- Sticker Scrapbook design tokens. Keep the legacy blue aliases for older adapters. -->
-    <color name="mv_paper">#FBF6EC</color>
-    <color name="mv_paper_deep">#EEE5D8</color>
-    <color name="mv_surface">#FFFDF8</color>
-    <color name="mv_ink">#241F1A</color>
-    <color name="mv_muted">#756E65</color>
-    <color name="mv_line">#D9D0C4</color>
-    <color name="mv_orange">#FF6B3D</color>
-    <color name="mv_orange_dark">#C84A29</color>
-    <color name="mv_orange_content">#241F1A</color>
-    <color name="mv_purple">#7962E8</color>
-    <color name="mv_purple_dark">#4B398E</color>
-    <color name="mv_tag_surface">#E9E2FF</color>
-    <color name="mv_lime">#B8EF65</color>
-    <color name="mv_sky">#70CEF2</color>
-    <color name="mv_warning_surface">#FFF1C9</color>
-    <color name="mv_warning_ink">#6D4A10</color>
-    <color name="mv_error">#B54732</color>
-    <color name="mv_blue">#7962E8</color>
-    <color name="mv_blue_dark">#4B398E</color>
-    <color name="mv_text">#241F1A</color>
+    <!-- Neutral zinc design tokens (light). Semantic names only; screens never hardcode RGB. -->
+    <color name="mv_bg">#FAFAFA</color>
+    <color name="mv_surface">#FFFFFF</color>
+    <color name="mv_surface_alt">#F4F4F5</color>
+    <color name="mv_line">#E4E4E7</color>
+    <color name="mv_line_strong">#D4D4D8</color>
+    <color name="mv_text">#18181B</color>
+    <color name="mv_muted">#71717A</color>
+    <color name="mv_primary">#18181B</color>
+    <color name="mv_primary_pressed">#3F3F46</color>
+    <color name="mv_on_primary">#FAFAFA</color>
+    <color name="mv_accent">#2563EB</color>
+    <color name="mv_accent_text">#1D4ED8</color>
+    <color name="mv_accent_soft">#EFF6FF</color>
+    <color name="mv_favorite">#D97706</color>
+    <color name="mv_danger">#DC2626</color>
+    <color name="mv_danger_soft">#FEF2F2</color>
+    <color name="mv_warning_surface">#FFFBEB</color>
+    <color name="mv_warning_ink">#92400E</color>
+    <color name="mv_overlay">#CC18181B</color>
+    <color name="mv_on_overlay">#FAFAFA</color>
+    <color name="mv_checker_light">#FFFFFF</color>
+    <color name="mv_checker_dark">#E4E4E7</color>
 </resources>

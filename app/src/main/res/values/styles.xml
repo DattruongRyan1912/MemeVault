@@ -1,12 +1,28 @@
 <resources>
-    <style name="Theme.MemeVault" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">@color/mv_blue</item>
-        <item name="android:colorControlActivated">@color/mv_blue_dark</item>
-        <item name="android:navigationBarColor">@color/mv_surface</item>
-        <item name="android:statusBarColor">@color/mv_surface</item>
+    <!-- Base theme carries every token; API-qualified files only override single items. -->
+    <style name="Base.Theme.MemeVault" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">@color/mv_accent</item>
+        <item name="android:colorControlActivated">@color/mv_accent</item>
+        <item name="android:colorControlNormal">@color/mv_muted</item>
+        <item name="android:colorBackground">@color/mv_bg</item>
+        <item name="android:windowBackground">@color/mv_bg</item>
+        <item name="android:navigationBarColor">@color/mv_bg</item>
+        <item name="android:statusBarColor">@color/mv_bg</item>
         <item name="android:textColorPrimary">@color/mv_text</item>
+        <item name="android:textColorSecondary">@color/mv_muted</item>
+        <item name="android:textColorHint">@color/mv_muted</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/Theme.MemeVault.Dialog</item>
+    </style>
+
+    <style name="Theme.MemeVault" parent="Base.Theme.MemeVault" />
+
+    <style name="Theme.MemeVault.Dialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/mv_accent</item>
+        <item name="android:textColorPrimary">@color/mv_text</item>
+        <item name="android:textColorSecondary">@color/mv_muted</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
     </style>
 </resources>
