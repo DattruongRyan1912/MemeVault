@@ -16,7 +16,6 @@ import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
-import java.io.File
 import java.util.Locale
 
 @Entity(
@@ -222,6 +221,9 @@ interface AssetDao {
     @Query("UPDATE assets SET display_name = :displayName WHERE id = :id")
     fun rename(id: String, displayName: String): Int
 
+    @Query("UPDATE assets SET original_path = :path WHERE id = :id")
+    fun updateOriginalPath(id: String, path: String): Int
+
     @Query(
         "UPDATE assets SET last_used_at = :now, use_count = use_count + 1 WHERE id = :id",
     )
@@ -250,6 +252,12 @@ interface AssetDao {
 
     @Query("SELECT path FROM asset_variants")
     fun allVariantPaths(): List<String>
+
+    @Query("SELECT * FROM asset_variants")
+    fun allVariants(): List<AssetVariantEntity>
+
+    @Query("UPDATE asset_variants SET path = :path WHERE asset_id = :assetId AND profile = :profile")
+    fun updateVariantPath(assetId: String, profile: String, path: String): Int
 
     @Query("SELECT original_path FROM assets")
     fun allOriginalPaths(): List<String>
@@ -628,19 +636,22 @@ class AssetDatabase(context: Context) : AutoCloseable {
 
     fun referencedMaskPaths(): List<String> = dao.allMaskPaths()
 
-    /** Remove rows whose original was lost outside the app; derived stickers are unlinked first. */
-    fun removeMissingOriginalRows(managedOriginalsRoot: String): Int {
-        val root = runCatching { File(managedOriginalsRoot).canonicalPath }.getOrDefault(managedOriginalsRoot)
-        val missing = dao.allAssets()
-            .filterNot {
-                runCatching {
-                    val path = File(it.originalPath).canonicalPath
-                    path.startsWith(root + File.separator) && File(path).isFile
-                }.getOrDefault(false)
-            }
-            .map { it.id }
-        missing.forEach { dao.deleteAssetPreservingDerived(it) }
-        return missing.size
+    /** Stored original path per asset id; reconcile classifies and repairs these. */
+    fun originalPathsById(): Map<String, String> = dao.allAssets().associate { it.id to it.originalPath }
+
+    fun updateOriginalPath(id: String, path: String) {
+        dao.updateOriginalPath(id, path)
+    }
+
+    /** Remove a row whose original was lost outside the app; derived stickers are unlinked first. */
+    fun removeMissingOriginalRow(id: String) {
+        dao.deleteAssetPreservingDerived(id)
+    }
+
+    fun allVariants(): List<StoredVariant> = dao.allVariants().map { it.toStoredVariant() }
+
+    fun updateVariantPath(assetId: String, profile: String, path: String) {
+        dao.updateVariantPath(assetId, profile, path)
     }
 
     override fun close() {

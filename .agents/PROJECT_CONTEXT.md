@@ -113,7 +113,9 @@ and record their own MIME type, path, size, and generation profile.
   tag relations carry MANUAL/SYSTEM/AI attribution, and canonical tags are normalized/migrated.
 - Sticker saves stage and validate PNG/mask bytes before promoting atomically, insert asset/recipe/
   tags in one Room transaction, clean promoted files on failure, and reconcile missing/orphan files
-  and stale staging directories at repository startup.
+  and stale staging directories at repository startup. Since 0.1.20 reconcile rebases absolute
+  paths written under an old app-data prefix, never removes unresolved rows, and skips row/orphan
+  cleanup when more than 10 items or half the library would go (`StorageReconcilePolicy`).
 - Library cards, detail, the non-exported AssetPickerActivity, Sticker Studio and the keyboard all
   expose quick sticker creation. The picker filters static images and Sticker assets; the keyboard
   has a Sticker tab, reloads on `onStartInputView()`, and hides media/create actions for sensitive

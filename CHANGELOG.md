@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.20 — 2026-10-27
+
+Sửa audit H1: reconcile lúc khởi động không còn xoá được cả thư viện.
+
+- Đường dẫn gốc lưu trong Room nằm ngoài thư mục app hiện tại (restore sang user/work profile
+  khác, chuyển máy) được nối lại theo phần `media/originals/<tên>` khi file tồn tại, thay vì bị
+  coi là mất. Variant được nối lại theo cùng cách.
+- Mỗi dòng được phân loại: còn file, đã nối lại, mất file (đường dẫn trong thư mục hiện tại nhưng
+  file không còn), hoặc chưa xác định (đường dẫn lạ không khớp file nào, hoặc kiểm tra lỗi). Chỉ
+  dòng "mất file" mới được xoá; lỗi không còn bị tính là mất.
+- Phanh an toàn: không tự xoá khi còn dòng chưa xác định, khi số dòng cần xoá vượt 10 hoặc chiếm
+  từ một nửa thư viện trở lên. Dọn file mồ côi trong `originals/` dùng cùng ngưỡng, nên DB bị reset
+  hoặc restore thiếu không còn quét sạch file gốc. Phanh không ném lỗi nên app vẫn mở bình thường;
+  ô mất file vẫn hiện và xoá tay được.
+- Kiểm thử: 72 unit test (thêm `StorageReconcilePolicyTest`), 9 instrumented test (thêm
+  `StorageReconcileInstrumentedTest`, đỏ trên 0.1.19 và xanh trên bản này).
+- Còn lại: lưu đường dẫn tương đối (migration v4) và vùng cách ly cho file mồ côi.
+- Tăng `versionCode` lên 21.
+
 ## 0.1.19 — 2026-10-27
 
 Trọng tâm: trải nghiệm quản lý thư viện và giao diện chuyên nghiệp hơn. Hành vi với app bên thứ

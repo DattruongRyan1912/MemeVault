@@ -788,16 +788,27 @@ class AssetRepository(private val context: Context) : AutoCloseable {
     private fun variantDirectory(id: String): File = File(variantsDirectory, id)
 
     private fun reconcileStorage() {
-        // This method runs under STORAGE_LOCK. Delete rows for originals removed by the
-        // OS/file manager first; the DAO unlinks derived stickers, matching the user-facing
-        // "source missing" policy. A failed reconcile is propagated to awaitReconciliation so
-        // callers never continue as if the storage snapshot were safe.
-        database.removeMissingOriginalRows(assetsDirectory.canonicalPath)
-        val referencedOriginals = database.referencedOriginalPaths().map { File(it).canonicalPath }.toSet()
+        // This method runs under STORAGE_LOCK. Paths are stored absolute and the app-data
+        // directory can move (restore into another user/profile, device transfer), so rows are
+        // rebased first and only a small minority of truly missing originals is ever removed
+        // (audit H1); the DAO unlinks derived stickers, matching the "source missing" policy.
+        // A tripped brake is not an error. A failed reconcile is propagated to
+        // awaitReconciliation so callers never continue as if the storage snapshot were safe.
+        val originals = StorageReconcilePolicy.plan(
+            database.originalPathsById(),
+            assetsDirectory,
+            ORIGINALS_SEGMENT,
+        )
+        originals.rebased.forEach { (id, path) -> database.updateOriginalPath(id, path) }
+        originals.removable.forEach(database::removeMissingOriginalRow)
+        if (originals.sweepAllowed) sweepOrphanOriginals()
+        database.allVariants().forEach { variant ->
+            val check = StorageReconcilePolicy.check(variant.path, variantsDirectory, VARIANTS_SEGMENT)
+            if (check is StoredPathCheck.Rebased) {
+                database.updateVariantPath(variant.assetId, variant.profile, check.path)
+            }
+        }
         val referencedVariants = database.referencedVariantPaths().map { File(it).canonicalPath }.toSet()
-        listFilesRecursively(assetsDirectory)
-            .filter { it.canonicalPath !in referencedOriginals }
-            .forEach(File::delete)
         listFilesRecursively(variantsDirectory)
             .filter { it.canonicalPath !in referencedVariants }
             .forEach(File::delete)
@@ -810,6 +821,14 @@ class AssetRepository(private val context: Context) : AutoCloseable {
         stagingDirectory.listFiles().orEmpty()
             .filter { System.currentTimeMillis() - it.lastModified() > STAGING_TTL_MS }
             .forEach { it.deleteRecursively() }
+    }
+
+    /** An emptied or replaced database makes every original look orphaned; never sweep that. */
+    private fun sweepOrphanOriginals() {
+        val referenced = database.referencedOriginalPaths().map { File(it).canonicalPath }.toSet()
+        val files = listFilesRecursively(assetsDirectory)
+        val orphans = files.filter { it.canonicalPath !in referenced }
+        if (StorageReconcilePolicy.allowsRemoval(orphans.size, files.size)) orphans.forEach(File::delete)
     }
 
     private fun listFilesRecursively(directory: File): List<File> =
@@ -1064,6 +1083,8 @@ class AssetRepository(private val context: Context) : AutoCloseable {
         const val STAGING_DIRECTORY = "staging"
         const val VARIANTS_DIRECTORY = "variants"
         const val MASKS_DIRECTORY = "masks"
+        private const val ORIGINALS_SEGMENT = "$MEDIA_DIRECTORY/$ORIGINALS_DIRECTORY"
+        private const val VARIANTS_SEGMENT = "$MEDIA_DIRECTORY/$VARIANTS_DIRECTORY"
         const val VARIANT_TIKTOK = "tiktok"
         const val VARIANT_OPAQUE_IMAGE = "opaque_share_v3"
         const val VARIANT_TRANSPARENT_STICKER_320 = "transparent_sticker_320_v1"
