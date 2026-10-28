@@ -37,6 +37,8 @@ internal enum class LibraryTypeFilter(val label: String, val filter: AssetFilter
     STICKERS("Sticker", AssetFilter.STICKERS),
     GIFS("GIF", AssetFilter.GIFS),
     VIDEOS("Video", AssetFilter.VIDEOS),
+    /** Hidden while empty; the only view that shows archived sources. */
+    SOURCES("Ảnh nguồn", AssetFilter.SOURCES),
 }
 
 /** Tag scope: everything, one tag (by canonical key), or assets that still need tags. */
@@ -51,7 +53,12 @@ internal data class TagCount(val key: String, val label: String, val count: Int)
 /** Pure, unit-tested projection of the loaded library onto the current view criteria. */
 internal object LibraryView {
     fun matches(asset: Asset, filter: AssetFilter): Boolean = when (filter) {
-        AssetFilter.ALL -> true
+        AssetFilter.SOURCES -> asset.archived
+        else -> !asset.archived && matchesType(asset, filter)
+    }
+
+    private fun matchesType(asset: Asset, filter: AssetFilter): Boolean = when (filter) {
+        AssetFilter.ALL, AssetFilter.SOURCES -> true
         AssetFilter.FAVORITES -> asset.favorite
         AssetFilter.ANIMATED -> asset.isAnimatedMedia
         AssetFilter.GIFS -> asset.type == AssetType.GIF
@@ -84,10 +91,14 @@ internal object LibraryView {
         }
     }
 
-    /** Most-used tags across the loaded assets, used as browsable collections. */
+    /** Assets shown in the main library: everything except pending deletions and archived sources. */
+    fun inLibrary(asset: Asset, excludedIds: Set<String> = emptySet()): Boolean =
+        asset.id !in excludedIds && !asset.archived
+
+    /** Most-used tags across the library (archived sources excluded), used as browsable collections. */
     fun topTags(all: List<Asset>, limit: Int, excludedIds: Set<String> = emptySet()): List<TagCount> {
         val counts = linkedMapOf<String, TagCount>()
-        all.asSequence().filter { it.id !in excludedIds }.forEach { asset ->
+        all.asSequence().filter { inLibrary(it, excludedIds) }.forEach { asset ->
             asset.tags.mapNotNull { TagNormalizer.normalize(it) }.distinctBy { it.key }.forEach { tag ->
                 val previous = counts[tag.key]
                 counts[tag.key] = TagCount(tag.key, previous?.label ?: tag.displayName, (previous?.count ?: 0) + 1)

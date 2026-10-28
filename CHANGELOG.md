@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.21 — 2026-10-28
+
+Ảnh gốc sau khi tạo sticker, và tinh chỉnh vùng tách bằng cọ.
+
+- Room v4 (migration 3→4 thêm cột `archived`, mặc định 0; không tự cất ảnh nào). Ảnh đã cất nằm ở
+  chip **Ảnh nguồn** (ẩn khi trống): không hiện trong lưới, đếm chip, dải tag và bàn phím, vẫn là
+  nguồn để sửa lại sticker. Panel chi tiết có banner và nút "Đưa về thư viện"; menu ⋮ có "Cất vào
+  Ảnh nguồn" cho ảnh meme. Nhập lại từ thư viện/chia sẻ/Tenor một ảnh đang cất sẽ đưa nó về thư
+  viện và báo rõ; nhập từ Studio hoặc trình chọn ảnh tạo sticker thì giữ nguyên ở Ảnh nguồn.
+- Studio có mục **Ảnh gốc sau khi lưu**: Giữ / Cất riêng / Xoá, nhớ lựa chọn trên máy. Chỉ xử lý
+  ảnh gốc sau khi sticker đã lưu thành công. "Xoá" chỉ áp dụng cho ảnh vừa nhập để làm sticker và
+  chưa có sticker nào khác dùng (kiểm lại ngay sau khi lưu); trường hợp khác tự giữ nguyên và giải
+  thích lý do. Sau khi xoá, Studio khoá sửa/lưu nhưng vẫn Chia sẻ/Copy được (đường khôi phục sau
+  khi process bị huỷ đã viết nhưng chưa kiểm thử).
+- **Tinh chỉnh** vùng tách: trình chỉnh toàn màn hình với cọ Bỏ bớt / Thêm vùng, cỡ cọ 4–48dp, một
+  ngón để tô, hai ngón để phóng to (tối đa 8×) và di chuyển, hoàn tác/làm lại. Vùng đã bỏ vẫn hiện
+  mờ để dễ tô lại. Nét tô đưa mask về hẳn 0 hoặc 255 nên thanh ngưỡng không làm thay đổi phần đã tô;
+  mask đã chỉnh được lưu vào recipe nên mở lại sticker vẫn giữ nét tô. Lịch sử hoàn tác lưu theo
+  vùng thay đổi, giới hạn 24 MB. Xoay màn hình khi đang tô vẫn giữ nét (mất lịch sử hoàn tác). Tách
+  lại hoặc crop lại khi đã tô sẽ cảnh báo trước vì sẽ bỏ các nét tô.
+- Kiểm thử: 86 unit test (thêm `MaskBrushSessionTest`, `StickerSourcePolicyTest`, lọc Ảnh nguồn
+  trong `LibraryViewTest`), 12 instrumented test (migration 3→4; `StickerSourceInstrumentedTest`).
+  E2E trên emulator API 35: tô xoá, hoàn tác/làm lại, áp dụng, lưu kèm Cất riêng, mở lại recipe,
+  xoay màn hình khi đang tô, chip/banner Ảnh nguồn. Chưa chạy được trên emulator: tách nền ML Kit
+  (module tải về bị huỷ) nên luồng nhập mới → Xoá ảnh gốc chỉ được kiểm ở tầng repository.
+- Còn lại: chạm để chọn/bỏ từng chủ thể (ML Kit multi-subject), thao tác cất/đưa về hàng loạt,
+  lưu đường dẫn tương đối (nay là migration v5) và vùng cách ly cho file mồ côi.
+- Tăng `versionCode` lên 22.
+
 ## 0.1.20 — 2026-10-27
 
 Sửa audit H1: reconcile lúc khởi động không còn xoá được cả thư viện.

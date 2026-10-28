@@ -215,7 +215,8 @@ class AssetPickerActivity : Activity() {
         }
     }
 
-    private fun selectAsset(asset: Asset) {
+    /** [importedNow]: the image was imported by this picker only to become a sticker source. */
+    private fun selectAsset(asset: Asset, importedNow: Boolean = false) {
         executor.execute {
             val recipe = runCatching { repository.findStickerRecipe(asset.id) }.getOrNull()
             mainHandler.post {
@@ -229,6 +230,7 @@ class AssetPickerActivity : Activity() {
                         putExtra(StickerStudioActivity.EXTRA_EDIT_STICKER_ASSET_ID, asset.id)
                     } else {
                         putExtra(StickerStudioActivity.EXTRA_SOURCE_ASSET_ID, asset.id)
+                        putExtra(StickerStudioActivity.EXTRA_SOURCE_IMPORTED_NOW, importedNow)
                     }
                     putExtra(StickerStudioActivity.EXTRA_QUICK_MODE, true)
                     putExtra(StickerStudioActivity.EXTRA_ENTRY_POINT, StickerStudioActivity.ENTRY_POINT_PICKER)
@@ -282,11 +284,11 @@ class AssetPickerActivity : Activity() {
                 val uri = data?.data ?: return
                 status.text = getString(R.string.sticker_picker_importing)
                 executor.execute {
-                    val outcome = repository.importUri(uri)
+                    val outcome = repository.importUri(uri, keepArchived = true)
                     mainHandler.post {
                         if (destroyed) return@post
                         if (outcome.asset != null) {
-                            selectAsset(outcome.asset)
+                            selectAsset(outcome.asset, importedNow = !outcome.duplicate)
                         } else {
                             status.text = outcome.error ?: getString(R.string.sticker_picker_import_failed)
                         }

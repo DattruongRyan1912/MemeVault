@@ -85,10 +85,27 @@ class AssetRepository(private val context: Context) : AutoCloseable {
         return database.findVariant(id, profile)
     }
 
-    fun importUri(uri: Uri): ImportOutcome = importUriInternal(uri, null)
+    /**
+     * [keepArchived] is for Sticker Studio and its picker: they only need the image as a source,
+     * so a duplicate parked under "Ảnh nguồn" stays there instead of reappearing in the grid.
+     */
+    fun importUri(uri: Uri, keepArchived: Boolean = false): ImportOutcome =
+        restoreArchivedDuplicate(importUriInternal(uri, null), keepArchived)
 
     /** Imports a PNG from a user-granted external tree as a sticker asset. */
-    fun importUriAsSticker(uri: Uri): ImportOutcome = importUriInternal(uri, AssetType.STICKER)
+    fun importUriAsSticker(uri: Uri): ImportOutcome =
+        restoreArchivedDuplicate(importUriInternal(uri, AssetType.STICKER), keepArchived = false)
+
+    /**
+     * Importing something the library already holds as an archived source would otherwise answer
+     * "already there" for an item the grid hides, so a regular import moves it back.
+     */
+    private fun restoreArchivedDuplicate(outcome: ImportOutcome, keepArchived: Boolean): ImportOutcome {
+        val existing = outcome.asset ?: return outcome
+        if (!outcome.duplicate || !existing.archived || keepArchived) return outcome
+        if (!database.setArchived(existing.id, false)) return outcome
+        return outcome.copy(asset = existing.copy(archived = false), unarchived = true)
+    }
 
     private fun importUriInternal(uri: Uri, typeOverride: AssetType?): ImportOutcome {
         awaitReconciliation()
@@ -143,7 +160,10 @@ class AssetRepository(private val context: Context) : AutoCloseable {
                     BoundedStreams.copy(input, output, MAX_IMPORT_BYTES)
                 }
             }
-            persistImportedFile(temporaryFile, displayName, normalizedMime, typeOverride)
+            restoreArchivedDuplicate(
+                persistImportedFile(temporaryFile, displayName, normalizedMime, typeOverride),
+                keepArchived = false,
+            )
         } catch (error: Exception) {
             ImportOutcome(error = error.message ?: "Không thể lưu sticker")
         } finally {
@@ -353,6 +373,13 @@ class AssetRepository(private val context: Context) : AutoCloseable {
     fun setFavorite(id: String, favorite: Boolean): Asset? {
         awaitReconciliation()
         database.setFavorite(id, favorite)
+        return findById(id)
+    }
+
+    /** Moves an asset under "Ảnh nguồn" (or back); returns the updated asset or null. */
+    fun setArchived(id: String, archived: Boolean): Asset? {
+        awaitReconciliation()
+        database.setArchived(id, archived)
         return findById(id)
     }
 

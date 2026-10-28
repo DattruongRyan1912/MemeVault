@@ -2,14 +2,18 @@ package com.memevault.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -48,6 +52,7 @@ class StickerStudioActivity : Activity() {
     private lateinit var copyButton: Button
     private lateinit var cancelButton: Button
     private lateinit var compareButton: Button
+    private lateinit var refineButton: Button
     private lateinit var thresholdSeekBar: SeekBar
     private lateinit var borderLabel: TextView
     private lateinit var borderPalette: LinearLayout
@@ -55,6 +60,11 @@ class StickerStudioActivity : Activity() {
     private lateinit var borderThicknessSeekBar: SeekBar
     private lateinit var tagsInput: EditText
     private lateinit var returnButton: Button
+    private lateinit var sourcePrefs: StickerSourcePreferences
+    private lateinit var sourceCard: LinearLayout
+    private lateinit var sourceChipRow: LinearLayout
+    private lateinit var sourceHint: TextView
+    private val sourceChips = linkedMapOf<SourceAfterSave, TextView>()
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
 
     private var engine: MlKitBackgroundRemovalEngine? = null
@@ -71,6 +81,19 @@ class StickerStudioActivity : Activity() {
     private var rendererId: String = MlKitBackgroundRemovalEngine.ENGINE_ID
     private var rendererVersion: String = MlKitBackgroundRemovalEngine.ENGINE_VERSION
     private var sourceMissing = false
+    /** The source was imported in this Studio/picker session just to become a sticker. */
+    private var sourceImportedNow = false
+    /** Stickers already derived from the current source; unknown counts as "some". */
+    private var sourceOtherDerived = Int.MAX_VALUE
+    /** The source was deleted after a save; the sticker stays shareable but is no longer editable. */
+    private var sourceDeleted = false
+    private var sourceDeleteBlockedHint = false
+    private var refineDialog: Dialog? = null
+    private var refineEditor: MaskEditorView? = null
+    /** The current mask carries brush edits that re-segmenting or re-cropping would discard. */
+    private var maskEdited = false
+    private var resegmentConfirmUntil = 0L
+    private var reopenRefineAfterRestore = false
     private var threshold = DEFAULT_THRESHOLD
     private var paddingFraction = StickerRenderer.DEFAULT_PADDING_FRACTION
     private var borderColor: Int? = null
@@ -106,6 +129,7 @@ class StickerStudioActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repository = AssetRepository(this)
+        sourcePrefs = StickerSourcePreferences(this)
         StudioDraftStore.cleanupStale(cacheDir)
         draftStore = StudioDraftStore(
             cacheDir,
@@ -145,7 +169,14 @@ class StickerStudioActivity : Activity() {
             ?: intent.getStringExtra(EXTRA_EDIT_STICKER_ASSET_ID)
         val sourceId = savedInstanceState?.getString(KEY_SOURCE_ASSET_ID)
             ?: intent.getStringExtra(EXTRA_SOURCE_ASSET_ID)
-        if (editId != null) {
+        sourceImportedNow = savedInstanceState?.getBoolean(KEY_SOURCE_IMPORTED_NOW)
+            ?: intent.getBooleanExtra(EXTRA_SOURCE_IMPORTED_NOW, false)
+        sourceDeleted = savedInstanceState?.getBoolean(KEY_SOURCE_DELETED, false) ?: false
+        maskEdited = savedInstanceState?.getBoolean(KEY_MASK_EDITED, false) ?: false
+        reopenRefineAfterRestore = savedInstanceState?.getBoolean(KEY_REFINE_OPEN, false) ?: false
+        if (sourceDeleted) {
+            restoreAfterSourceDeleted(pendingSavedAssetId)
+        } else if (editId != null) {
             editingStickerId = editId
             loadExistingSticker(editId)
         } else {
@@ -165,6 +196,15 @@ class StickerStudioActivity : Activity() {
         outState.putString(KEY_RENDERER_ID, rendererId)
         outState.putString(KEY_RENDERER_VERSION, rendererVersion)
         savedAsset?.id?.let { outState.putString(KEY_SAVED_ASSET_ID, it) }
+        outState.putBoolean(KEY_SOURCE_IMPORTED_NOW, sourceImportedNow)
+        outState.putBoolean(KEY_SOURCE_DELETED, sourceDeleted)
+        outState.putBoolean(KEY_MASK_EDITED, maskEdited)
+        // Rotation recreates the activity and the editor dialog with it; keep the strokes (not the
+        // undo history) and reopen the editor once the source and mask are restored.
+        refineEditor?.session?.let { session ->
+            runCatching { draftStore.saveRefine(session.snapshot(), session.width, session.height) }
+                .onSuccess { outState.putBoolean(KEY_REFINE_OPEN, true) }
+        }
         // Persist an explicit full-image selection too. Without this third state (no override /
         // explicit full / concrete crop), reopening a cropped recipe would silently reapply its
         // old crop after the user pressed “Toàn ảnh” and the activity was recreated.
@@ -248,12 +288,18 @@ class StickerStudioActivity : Activity() {
         compareButton = mvButton(getString(R.string.sticker_compare), { toggleCompare() })
         compareButton.isEnabled = false
         previewTools.addView(compareButton, LinearLayout.LayoutParams(0, dp(48), 1f))
-        previewTools.addView(TextView(this).apply {
-            text = getString(R.string.sticker_compare_hint)
-            applyMvTextStyle(12f, context.mvMuted, 3)
-            setPadding(dp(10), 0, 0, 0)
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        refineButton = mvButton(getString(R.string.sticker_refine), { openRefineEditor() }, iconRes = R.drawable.ic_brush)
+        refineButton.isEnabled = false
+        refineButton.contentDescription = getString(R.string.sticker_refine_content_description)
+        previewTools.addView(refineButton, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+            marginStart = dp(8)
+        })
         root.addView(previewTools)
+        root.addView(TextView(this).apply {
+            text = getString(R.string.sticker_refine_hint)
+            applyMvTextStyle(12f, context.mvMuted, 3)
+            setPadding(dp(2), dp(4), 0, 0)
+        })
 
         val chooseRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -415,6 +461,48 @@ class StickerStudioActivity : Activity() {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(10) })
 
+        sourceCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedBackground(mvSurface, radiusDp = 6, strokeColor = mvLine)
+            visibility = View.GONE
+        }
+        sourceCard.addView(TextView(this).apply {
+            text = getString(R.string.sticker_source_title)
+            applyMvTextStyle(13f, context.mvText, 1)
+        })
+        sourceChipRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        listOf(
+            SourceAfterSave.KEEP to R.string.sticker_source_keep_chip,
+            SourceAfterSave.ARCHIVE to R.string.sticker_source_archive_chip,
+            SourceAfterSave.DELETE to R.string.sticker_source_delete_chip,
+        ).forEach { (option, labelRes) ->
+            val chip = mvChip(getString(labelRes)) { selectSourceAction(option) }
+            sourceChips[option] = chip
+            sourceChipRow.addView(chip, LinearLayout.LayoutParams(
+                0,
+                dp(MV_TOUCH),
+                1f,
+            ).apply { if (option != SourceAfterSave.KEEP) marginStart = dp(6) })
+        }
+        sourceCard.addView(sourceChipRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(MV_TOUCH),
+        ).apply { topMargin = dp(4) })
+        sourceHint = TextView(this).apply {
+            applyMvTextStyle(12f, context.mvMuted, 4)
+            setPadding(dp(2), dp(4), 0, 0)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        sourceCard.addView(sourceHint)
+        root.addView(sourceCard, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(10) })
+
         val saveRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -474,6 +562,7 @@ class StickerStudioActivity : Activity() {
     private fun importSource(uri: Uri) {
         val generation = ++operationGeneration
         editingStickerId = null
+        maskEdited = false
         pendingCropRect = null
         replaceDraftStore()
         restoringDraftState = false
@@ -484,17 +573,18 @@ class StickerStudioActivity : Activity() {
         synchronized(operationLock) { cancelRequested = false }
         setBusy(getString(R.string.sticker_importing_original))
         activeTask = submitOperation(generation) task@{
-            val outcome = repository.importUri(uri)
+            val outcome = repository.importUri(uri, keepArchived = true)
             val asset = outcome.asset
             if (asset == null) {
                 postFailure(generation, outcome.error ?: getString(R.string.sticker_import_failed))
                 return@task
             }
-            bindSourceAsset(generation, asset, outcome.duplicate)
+            bindSourceAsset(generation, asset, outcome.duplicate, importedNow = !outcome.duplicate)
         }
     }
 
     private fun loadExistingAsset(id: String) {
+        val importedNow = sourceImportedNow
         val generation = ++operationGeneration
         activeTask?.cancel(true)
         activeTask = null
@@ -516,7 +606,14 @@ class StickerStudioActivity : Activity() {
                 postFailure(generation, getString(R.string.sticker_decode_failed))
                 return@load
             }
-            bindSourceAsset(generation, asset, duplicate = false, bitmap = bitmap, tagSeed = asset.tags)
+            bindSourceAsset(
+                generation,
+                asset,
+                duplicate = false,
+                importedNow = importedNow,
+                bitmap = bitmap,
+                tagSeed = asset.tags,
+            )
         }
     }
 
@@ -638,6 +735,7 @@ class StickerStudioActivity : Activity() {
             } else {
                 null
             }
+            val derived = runCatching { repository.countDerivedAssets(source.id) }.getOrDefault(Int.MAX_VALUE)
             runOnUiThread ui@{
                 if (!isCurrent(generation)) {
                     releaseDecodedPair(decoded, workingDecoded)
@@ -645,6 +743,8 @@ class StickerStudioActivity : Activity() {
                     return@ui
                 }
                 currentAsset = source
+                sourceImportedNow = false
+                sourceOtherDerived = derived
                 originalSourceBitmap = decoded
                 sourceBitmap = workingDecoded
                 cropRect = appliedCrop
@@ -683,6 +783,7 @@ class StickerStudioActivity : Activity() {
                 updateThresholdLabel()
                 updateBorderControls()
                 setIdle()
+                reopenRefineEditorIfRestoring()
             }
         }
     }
@@ -691,6 +792,7 @@ class StickerStudioActivity : Activity() {
         generation: Long,
         asset: Asset,
         duplicate: Boolean,
+        importedNow: Boolean,
         bitmap: Bitmap? = null,
         tagSeed: List<String> = asset.tags,
     ) {
@@ -735,12 +837,15 @@ class StickerStudioActivity : Activity() {
         } else {
             null
         }
+        val derived = runCatching { repository.countDerivedAssets(asset.id) }.getOrDefault(Int.MAX_VALUE)
         runOnUiThread ui@{
             if (!isCurrent(generation)) {
                 releaseDecodedPair(decoded, workingDecoded)
                 return@ui
             }
             currentAsset = asset
+            sourceImportedNow = importedNow
+            sourceOtherDerived = derived
             originalSourceBitmap = decoded
             sourceBitmap = workingDecoded
             cropRect = appliedCrop
@@ -769,6 +874,7 @@ class StickerStudioActivity : Activity() {
                 }
             }
             setIdle()
+            reopenRefineEditorIfRestoring()
         }
     }
 
@@ -796,6 +902,13 @@ class StickerStudioActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
+            if (maskEdited) {
+                addView(TextView(this@StickerStudioActivity).apply {
+                    text = getString(R.string.sticker_crop_discards_refine)
+                    applyMvTextStyle(12f, context.mvWarningInk, 3)
+                    setPadding(0, dp(4), 0, dp(2))
+                })
+            }
         }
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.sticker_crop_title)
@@ -843,6 +956,7 @@ class StickerStudioActivity : Activity() {
         sourceBitmap = working
         cropRect = normalized
         confidenceMask = null
+        maskEdited = false
         savedAsset = null
         clearRenderedPreview()
         if (previousSource != null && previousSource !== originalSourceBitmap && previousSource !== working) {
@@ -885,6 +999,13 @@ class StickerStudioActivity : Activity() {
 
     private fun segmentCurrentImage() {
         val source = sourceBitmap ?: return
+        // Re-segmenting replaces the mask; with brush edits, ask for a second tap instead of a dialog.
+        if (maskEdited && SystemClock.uptimeMillis() > resegmentConfirmUntil) {
+            resegmentConfirmUntil = SystemClock.uptimeMillis() + CONFIRM_WINDOW_MS
+            status.text = getString(R.string.sticker_resegment_confirm)
+            return
+        }
+        resegmentConfirmUntil = 0L
         savedAsset = null
         clearRenderedPreview()
         val generation = ++operationGeneration
@@ -924,6 +1045,7 @@ class StickerStudioActivity : Activity() {
                 rendered.onSuccess { sticker ->
                     activeTask = null
                     confidenceMask = result.getOrThrow().confidenceMask
+                    maskEdited = false
                     rendererId = result.getOrThrow().engineId
                     rendererVersion = result.getOrThrow().engineVersion
                     replaceRenderedSticker(sticker)
@@ -1007,6 +1129,11 @@ class StickerStudioActivity : Activity() {
         val selectedBorderThickness = borderThickness
         val selectedRendererId = rendererId
         val selectedRendererVersion = rendererVersion
+        val importedNow = sourceImportedNow
+        val sourceAction = StickerSourcePolicy.effective(
+            sourcePrefs.afterSave,
+            StickerSourcePolicy.canDelete(importedNow, sourceOtherDerived),
+        )
         val generation = ++operationGeneration
         setBusy(getString(R.string.sticker_saving))
         activeTask = submitOperation(generation) {
@@ -1039,25 +1166,150 @@ class StickerStudioActivity : Activity() {
                 )
             }.getOrElse { ImportOutcome(error = it.message ?: getString(R.string.sticker_save_failed)) }
             temporary.delete()
+            // The source is touched only after the sticker row exists, so a failed save never
+            // costs the user their original.
+            val appliedSourceAction = if (outcome.asset != null) {
+                applySourceAfterSave(source, sourceAction, importedNow)
+            } else {
+                SourceAfterSave.KEEP
+            }
             runOnUiThread ui@{
                 if (!isCurrent(generation)) return@ui
                 outcome.asset?.let { asset ->
                     activeTask = null
                     savedAsset = asset
+                    if (!outcome.duplicate && sourceOtherDerived != Int.MAX_VALUE) sourceOtherDerived++
+                    when (appliedSourceAction) {
+                        SourceAfterSave.ARCHIVE -> currentAsset = source.copy(archived = true)
+                        SourceAfterSave.DELETE -> {
+                            sourceDeleted = true
+                            sourceMissing = true
+                        }
+                        SourceAfterSave.KEEP -> Unit
+                    }
                     shareButton.isEnabled = true
                     copyButton.isEnabled = true
                     returnButton.isEnabled = true
                     setIdle()
-                    status.text = if (outcome.duplicate) {
+                    val saved = if (outcome.duplicate) {
                         getString(R.string.sticker_saved_duplicate)
                     } else {
                         getString(R.string.sticker_saved)
+                    }
+                    status.text = when {
+                        appliedSourceAction == SourceAfterSave.ARCHIVE && !source.archived ->
+                            "$saved ${getString(R.string.sticker_saved_source_archived)}"
+                        appliedSourceAction == SourceAfterSave.DELETE ->
+                            "$saved ${getString(R.string.sticker_saved_source_deleted)}"
+                        sourceAction != appliedSourceAction ->
+                            "$saved ${getString(R.string.sticker_saved_source_kept)}"
+                        else -> saved
                     }
                 } ?: run {
                     activeTask = null
                     setIdle()
                     status.text = outcome.error ?: getString(R.string.sticker_save_failed)
                 }
+            }
+        }
+    }
+
+    /** Runs on the executor right after a successful save; returns what actually happened. */
+    private fun applySourceAfterSave(
+        source: Asset,
+        action: SourceAfterSave,
+        importedNow: Boolean,
+    ): SourceAfterSave = runCatching {
+        when (action) {
+            SourceAfterSave.KEEP -> SourceAfterSave.KEEP
+            SourceAfterSave.ARCHIVE -> {
+                if (source.archived || repository.setArchived(source.id, archived = true) != null) {
+                    SourceAfterSave.ARCHIVE
+                } else {
+                    SourceAfterSave.KEEP
+                }
+            }
+            SourceAfterSave.DELETE -> {
+                val derived = repository.countDerivedAssets(source.id)
+                if (StickerSourcePolicy.canDeleteAfterSave(importedNow, derived) && repository.delete(source.id)) {
+                    SourceAfterSave.DELETE
+                } else {
+                    SourceAfterSave.KEEP
+                }
+            }
+        }
+    }.getOrDefault(SourceAfterSave.KEEP)
+
+    private fun selectSourceAction(option: SourceAfterSave) {
+        if (busy || sourceDeleted) return
+        if (option == SourceAfterSave.DELETE &&
+            !StickerSourcePolicy.canDelete(sourceImportedNow, sourceOtherDerived)
+        ) {
+            sourceDeleteBlockedHint = true
+            renderSourceCard()
+            return
+        }
+        sourceDeleteBlockedHint = false
+        sourcePrefs.afterSave = option
+        renderSourceCard()
+    }
+
+    private fun renderSourceCard() {
+        if (!::sourceCard.isInitialized) return
+        val source = currentAsset
+        sourceCard.visibility = if (source != null || sourceDeleted) View.VISIBLE else View.GONE
+        if (sourceDeleted) {
+            sourceChipRow.visibility = View.GONE
+            sourceHint.text = getString(R.string.sticker_source_deleted_state)
+            return
+        }
+        sourceChipRow.visibility = View.VISIBLE
+        val canDelete = StickerSourcePolicy.canDelete(sourceImportedNow, sourceOtherDerived)
+        val choice = StickerSourcePolicy.effective(sourcePrefs.afterSave, canDelete)
+        sourceChips.forEach { (option, chip) ->
+            val selected = option == choice
+            chip.styleMvChip(selected)
+            // Delete stays tappable when unavailable so the hint can explain why.
+            chip.alpha = if (option == SourceAfterSave.DELETE && !canDelete) 0.45f else 1f
+            chip.contentDescription = chip.text.toString() + if (selected) ", đang chọn" else ""
+        }
+        sourceHint.text = when {
+            sourceDeleteBlockedHint -> getString(R.string.sticker_source_delete_blocked)
+            choice == SourceAfterSave.ARCHIVE && source?.archived == true ->
+                getString(R.string.sticker_source_keep_archived)
+            choice == SourceAfterSave.ARCHIVE -> getString(R.string.sticker_source_archive_hint)
+            choice == SourceAfterSave.DELETE -> getString(R.string.sticker_source_delete_hint)
+            source?.archived == true -> getString(R.string.sticker_source_keep_archived)
+            else -> getString(R.string.sticker_source_keep_hint)
+        }
+    }
+
+    /**
+     * After process death following "Xoá ảnh gốc" there is no source to reload; restore only the
+     * saved sticker so Share, Copy and Return keep working.
+     */
+    private fun restoreAfterSourceDeleted(savedId: String?) {
+        sourceMissing = true
+        val generation = ++operationGeneration
+        setBusy(getString(R.string.sticker_opening_existing))
+        activeTask = submitOperation(generation) {
+            val saved = savedId?.let(repository::findById)
+            val bitmap = saved?.let { StickerImageLoader.decode(File(it.originalPath)) }
+            runOnUiThread ui@{
+                if (!isCurrent(generation)) {
+                    bitmap?.recycle()
+                    return@ui
+                }
+                activeTask = null
+                restoringDraftState = false
+                pendingSavedAssetId = null
+                savedAsset = saved
+                if (bitmap != null) {
+                    replaceRenderedSticker(bitmap)
+                    preview.setImageBitmap(bitmap)
+                }
+                setIdle()
+                status.text = getString(R.string.sticker_source_deleted_state)
             }
         }
     }
@@ -1102,6 +1354,275 @@ class StickerStudioActivity : Activity() {
         }
     }
 
+    /**
+     * Full-screen Keep/Erase editor over the working bitmap. It edits a copy of the mask; the
+     * Studio mask is swapped only after Apply re-renders successfully, so a running render never
+     * sees a half-painted array.
+     */
+    private fun openRefineEditor(restoredLevels: ByteArray? = null) {
+        if (busy || sourceMissing || refineDialog != null) return
+        val source = sourceBitmap ?: return
+        val mask = confidenceMask ?: return
+        val session = runCatching {
+            MaskBrushSession(source.width, source.height, restoredLevels ?: MaskBrushSession.quantize(mask))
+        }.getOrElse {
+            status.text = getString(R.string.sticker_refine_failed)
+            return
+        }
+        val editor = MaskEditorView(this, source, session, threshold).apply {
+            background = CheckerboardDrawable(dp(16), this@StickerStudioActivity)
+            contentDescription = getString(R.string.sticker_refine_canvas_description)
+        }
+        val dialog = Dialog(this, R.style.Theme_MemeVault)
+        var discardConfirmUntil = 0L
+        val message = TextView(this).apply {
+            applyMvTextStyle(12f, context.mvWarningInk, 3)
+            visibility = View.GONE
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        fun showMessage(text: String) {
+            message.text = text
+            message.visibility = View.VISIBLE
+        }
+        val cancel = {
+            if (session.hasEdits && SystemClock.uptimeMillis() > discardConfirmUntil) {
+                discardConfirmUntil = SystemClock.uptimeMillis() + CONFIRM_WINDOW_MS
+                showMessage(getString(R.string.sticker_refine_discard_confirm))
+            } else {
+                closeRefineEditor()
+            }
+        }
+        val apply = apply@{
+            if (!session.hasVisibleSubject(threshold)) {
+                showMessage(getString(R.string.sticker_refine_empty))
+                return@apply
+            }
+            val levels = if (session.hasEdits) session.snapshot() else null
+            closeRefineEditor()
+            if (levels != null) commitRefinedMask(levels)
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(mvBackground)
+        }
+        applySystemBarInsets(root)
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        topBar.addView(mvIconButton(R.drawable.ic_close, getString(R.string.cancel), { cancel() }),
+            LinearLayout.LayoutParams(dp(48), dp(48)))
+        topBar.addView(TextView(this).apply {
+            text = getString(R.string.sticker_refine_title)
+            applyMvTextStyle(18f, context.mvText, 1)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(8), 0)
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        topBar.addView(mvButton(getString(R.string.sticker_refine_apply), { apply() }, primary = true,
+            iconRes = R.drawable.ic_check), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(MV_TOUCH)))
+        root.addView(topBar)
+        // Landscape moves the tools beside the canvas; stacked below they would leave a strip.
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        if (!landscape) {
+            root.addView(TextView(this).apply {
+                text = getString(R.string.sticker_refine_gestures)
+                applyMvTextStyle(12f, context.mvMuted, 2)
+                setPadding(dp(2), dp(2), 0, dp(8))
+            })
+        }
+        val tools = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        tools.addView(message, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(6) })
+
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val modeChips = linkedMapOf<BrushMode, TextView>()
+        lateinit var undoButton: ImageView
+        lateinit var redoButton: ImageView
+        fun renderTools() {
+            modeChips.forEach { (mode, chip) ->
+                val selected = mode == editor.mode
+                chip.styleMvChip(selected)
+                chip.contentDescription = chip.text.toString() + if (selected) ", đang chọn" else ""
+            }
+            undoButton.isEnabled = session.canUndo
+            undoButton.alpha = if (session.canUndo) 1f else 0.35f
+            redoButton.isEnabled = session.canRedo
+            redoButton.alpha = if (session.canRedo) 1f else 0.35f
+        }
+        listOf(
+            BrushMode.ERASE to R.string.sticker_refine_erase,
+            BrushMode.KEEP to R.string.sticker_refine_keep,
+        ).forEach { (mode, labelRes) ->
+            val chip = mvChip(getString(labelRes)) {
+                editor.mode = mode
+                renderTools()
+            }
+            modeChips[mode] = chip
+            modeRow.addView(chip, LinearLayout.LayoutParams(0, dp(MV_TOUCH), 1f).apply {
+                if (mode == BrushMode.KEEP) marginStart = dp(6)
+            })
+        }
+        undoButton = mvIconButton(R.drawable.ic_undo, getString(R.string.sticker_refine_undo), { editor.undo() })
+        redoButton = mvIconButton(R.drawable.ic_redo, getString(R.string.sticker_refine_redo), { editor.redo() })
+        modeRow.addView(undoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
+        modeRow.addView(redoButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        tools.addView(modeRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) })
+
+        val sizeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val sizeLabel = TextView(this).apply {
+            applyMvTextStyle(13f, context.mvText, 1)
+        }
+        fun renderSize() {
+            sizeLabel.text = getString(R.string.sticker_refine_size, editor.brushRadiusDp)
+        }
+        sizeRow.addView(sizeLabel, LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.WRAP_CONTENT))
+        sizeRow.addView(SeekBar(this).apply {
+            max = MaskEditorView.MAX_RADIUS_DP - MaskEditorView.MIN_RADIUS_DP
+            progress = editor.brushRadiusDp - MaskEditorView.MIN_RADIUS_DP
+            contentDescription = getString(R.string.sticker_refine_size_content_description)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    editor.brushRadiusDp = MaskEditorView.MIN_RADIUS_DP + progress
+                    renderSize()
+                }
+
+                override fun onStartTrackingTouch(bar: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(bar: SeekBar?) = Unit
+            })
+        }, LinearLayout.LayoutParams(0, dp(MV_TOUCH), 1f))
+        tools.addView(sizeRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        if (landscape) {
+            val body = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            body.addView(editor, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            body.addView(tools, LinearLayout.LayoutParams(dp(LANDSCAPE_TOOLS_DP), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                marginStart = dp(12)
+            })
+            root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                topMargin = dp(4)
+            })
+        } else {
+            root.addView(editor, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            root.addView(tools, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        editor.onHistoryChanged = {
+            message.visibility = View.GONE
+            discardConfirmUntil = 0L
+            renderTools()
+        }
+        renderTools()
+        renderSize()
+
+        dialog.setContentView(root)
+        dialog.setCancelable(false)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            dialog.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            ) { cancel() }
+        } else {
+            dialog.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) cancel()
+                keyCode == KeyEvent.KEYCODE_BACK
+            }
+        }
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        refineDialog = dialog
+        refineEditor = editor
+        dialog.show()
+    }
+
+    private fun closeRefineEditor() {
+        refineDialog?.dismiss()
+        refineDialog = null
+        refineEditor?.release()
+        refineEditor = null
+        draftStore.clearRefine()
+    }
+
+    /** Re-renders with the brushed mask; the Studio mask changes only if that render succeeds. */
+    private fun commitRefinedMask(levels: ByteArray) {
+        val source = sourceBitmap ?: return
+        val selectedThreshold = threshold
+        val selectedBorderColor = borderColor
+        val selectedBorderThickness = borderThickness
+        val selectedPadding = paddingFraction
+        val operationDraftStore = draftStore
+        val generation = ++operationGeneration
+        setBusy(getString(R.string.sticker_refine_applying))
+        activeTask = submitOperation(generation) {
+            val edited = FloatArray(levels.size) { (levels[it].toInt() and 0xFF) / 255f }
+            val result = runCatching {
+                val sticker = StickerRenderer.render(
+                    source = source,
+                    confidenceMask = edited,
+                    threshold = selectedThreshold,
+                    borderColor = selectedBorderColor,
+                    borderThickness = selectedBorderThickness,
+                    paddingFraction = selectedPadding,
+                )
+                try {
+                    operationDraftStore.saveMask(edited, source.width, source.height)
+                } catch (error: Throwable) {
+                    sticker.recycle()
+                    throw error
+                }
+                sticker
+            }
+            runOnUiThread ui@{
+                if (!isCurrent(generation)) {
+                    result.getOrNull()?.recycle()
+                    return@ui
+                }
+                activeTask = null
+                result.onSuccess { sticker ->
+                    confidenceMask = edited
+                    maskEdited = true
+                    savedAsset = null
+                    replaceRenderedSticker(sticker)
+                    preview.setImageBitmap(sticker)
+                    showingSourcePreview = false
+                    compareButton.text = getString(R.string.sticker_compare_source)
+                    setIdle()
+                    status.text = getString(R.string.sticker_refine_applied)
+                }.onFailure { error ->
+                    setIdle()
+                    status.text = userFacingError(error)
+                }
+            }
+        }
+    }
+
+    private fun reopenRefineEditorIfRestoring() {
+        if (!reopenRefineAfterRestore) return
+        reopenRefineAfterRestore = false
+        val source = sourceBitmap ?: return
+        if (confidenceMask == null) return
+        draftStore.loadRefine(source.width, source.height)?.let(::openRefineEditor)
+    }
+
     private fun setBusy(message: String) {
         busy = true
         status.text = message
@@ -1109,6 +1630,7 @@ class StickerStudioActivity : Activity() {
         cropButton.isEnabled = false
         segmentButton.isEnabled = false
         compareButton.isEnabled = false
+        refineButton.isEnabled = false
         saveButton.isEnabled = false
         shareButton.isEnabled = false
         copyButton.isEnabled = false
@@ -1123,13 +1645,15 @@ class StickerStudioActivity : Activity() {
         chooseButton.isEnabled = true
         cropButton.isEnabled = originalSourceBitmap != null && !sourceMissing
         segmentButton.isEnabled = sourceBitmap != null && !sourceMissing
-        compareButton.isEnabled = renderedSticker != null
-        saveButton.isEnabled = renderedSticker != null
+        compareButton.isEnabled = renderedSticker != null && sourceBitmap != null
+        refineButton.isEnabled = confidenceMask != null && sourceBitmap != null && !sourceMissing
+        saveButton.isEnabled = renderedSticker != null && !sourceMissing
         shareButton.isEnabled = savedAsset != null
         copyButton.isEnabled = savedAsset != null
         returnButton.isEnabled = savedAsset != null
-        findThresholdSeekBar()?.isEnabled = confidenceMask != null
+        findThresholdSeekBar()?.isEnabled = confidenceMask != null && !sourceMissing
         updateBorderControls()
+        renderSourceCard()
         cancelButton.isEnabled = false
     }
 
@@ -1219,6 +1743,7 @@ class StickerStudioActivity : Activity() {
         cropButton.isEnabled = false
         segmentButton.isEnabled = false
         compareButton.isEnabled = false
+        refineButton.isEnabled = false
         saveButton.isEnabled = false
         shareButton.isEnabled = false
         copyButton.isEnabled = false
@@ -1252,6 +1777,7 @@ class StickerStudioActivity : Activity() {
         copyButton.isEnabled = false
         compareButton.isEnabled = false
         compareButton.text = getString(R.string.sticker_compare)
+        refineButton.isEnabled = false
         findThresholdSeekBar()?.isEnabled = false
         updateBorderControls()
         cancelButton.isEnabled = false
@@ -1327,10 +1853,10 @@ class StickerStudioActivity : Activity() {
         }
         if (::borderThicknessSeekBar.isInitialized) {
             borderThicknessSeekBar.progress = borderThickness
-            borderThicknessSeekBar.isEnabled = !busy && confidenceMask != null && borderColor != null
+            borderThicknessSeekBar.isEnabled = !busy && !sourceMissing && confidenceMask != null && borderColor != null
         }
         if (::borderPalette.isInitialized) {
-            val canEdit = !busy && confidenceMask != null
+            val canEdit = !busy && !sourceMissing && confidenceMask != null
             for (index in 0 until borderPalette.childCount) {
                 borderPalette.getChildAt(index).apply {
                     isEnabled = canEdit
@@ -1590,6 +2116,10 @@ class StickerStudioActivity : Activity() {
     }
 
     override fun onDestroy() {
+        refineDialog?.dismiss()
+        refineDialog = null
+        refineEditor?.release()
+        refineEditor = null
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
             backCallback = null
@@ -1636,6 +2166,8 @@ class StickerStudioActivity : Activity() {
 
     companion object {
         const val EXTRA_SOURCE_ASSET_ID = "source_asset_id"
+        /** Boolean: the picker imported the source just now, so deleting it after save is allowed. */
+        const val EXTRA_SOURCE_IMPORTED_NOW = "source_imported_now"
         const val EXTRA_EDIT_STICKER_ASSET_ID = "edit_sticker_asset_id"
         const val EXTRA_QUICK_MODE = "quick_mode"
         const val EXTRA_ENTRY_POINT = "entry_point"
@@ -1653,6 +2185,12 @@ class StickerStudioActivity : Activity() {
         private const val KEY_RENDERER_ID = "studio_renderer_id"
         private const val KEY_RENDERER_VERSION = "studio_renderer_version"
         private const val KEY_SAVED_ASSET_ID = "studio_saved_asset_id"
+        private const val KEY_SOURCE_IMPORTED_NOW = "studio_source_imported_now"
+        private const val KEY_SOURCE_DELETED = "studio_source_deleted"
+        private const val KEY_MASK_EDITED = "studio_mask_edited"
+        private const val KEY_REFINE_OPEN = "studio_refine_open"
+        private const val CONFIRM_WINDOW_MS = 4_000L
+        private const val LANDSCAPE_TOOLS_DP = 300
         private const val KEY_CROP_ACTIVE = "studio_crop_active"
         private const val KEY_CROP_LEFT = "studio_crop_left"
         private const val KEY_CROP_TOP = "studio_crop_top"

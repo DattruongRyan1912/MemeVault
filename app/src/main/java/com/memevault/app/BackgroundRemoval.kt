@@ -408,5 +408,5 @@ object StickerRenderer {
 
     private const val CHECK_INTERRUPT_MASK = 0x3FFF
 
-    private const val MIN_VISIBLE_ALPHA = 8
+    internal const val MIN_VISIBLE_ALPHA = 8
 }

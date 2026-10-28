@@ -54,6 +54,7 @@ internal class AssetDetailPanel(
     private val sourceValue = TextView(context)
     private val sourceRow = LinearLayout(context)
     private var studioButton: View? = null
+    private val archiveBanner = LinearLayout(context)
     private val infoValues = linkedMapOf<String, TextView>()
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("vi"))
     private var stickerSourceMissing = false
@@ -178,6 +179,28 @@ internal class AssetDetailPanel(
             topMargin = context.dp(12)
         })
 
+        // Archived sources are only reachable from the "Ảnh nguồn" chip; say why and offer the way back.
+        archiveBanner.apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = context.roundedBackground(context.mvWarningSurface, MV_RADIUS, context.mvLine)
+            setPadding(context.dp(12), context.dp(6), context.dp(6), context.dp(6))
+            visibility = View.GONE
+            addView(TextView(context).apply {
+                text = context.getString(R.string.archived_banner)
+                applyMvTextStyle(13f, context.mvWarningInk, 3)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(context.mvButton(context.getString(R.string.restore_from_sources), {
+                activity.setArchived(asset, archived = false)
+            }), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, context.dp(MV_TOUCH)).apply {
+                marginStart = context.dp(8)
+            })
+        }
+        content.addView(archiveBanner, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = context.dp(12) })
+
         content.addView(context.mvSectionLabel("TÊN"), sectionLabelParams())
         val nameRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -296,6 +319,7 @@ internal class AssetDetailPanel(
         favoriteButton.contentDescription = context.getString(
             if (asset.favorite) R.string.remove_favorite else R.string.add_favorite,
         )
+        archiveBanner.visibility = if (asset.archived) View.VISIBLE else View.GONE
         if (!nameInput.hasFocus()) nameInput.setText(DisplayNamePolicy.baseName(asset.displayName))
         extensionLabel.text = DisplayNamePolicy.extensionOf(asset.displayName)
         renderTags()
@@ -407,7 +431,12 @@ internal class AssetDetailPanel(
         if (asset.type == AssetType.GIF) export.add(0, MENU_ANIMATED_STICKER, 0, context.getString(R.string.share_animated_sticker))
         export.add(0, MENU_TIKTOK, 1, "Gửi tới TikTok")
         export.add(0, MENU_ZALO, 2, "Gửi tới Zalo")
-        menu.menu.add(0, MENU_DELETE, 2, "Xoá khỏi thư viện")
+        if (asset.archived) {
+            menu.menu.add(0, MENU_ARCHIVE, 2, context.getString(R.string.restore_from_sources))
+        } else if (asset.type == AssetType.MEME) {
+            menu.menu.add(0, MENU_ARCHIVE, 2, context.getString(R.string.archive_to_sources))
+        }
+        menu.menu.add(0, MENU_DELETE, 3, "Xoá khỏi thư viện")
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_RENAME -> {
@@ -419,6 +448,7 @@ internal class AssetDetailPanel(
                 MENU_ANIMATED_STICKER -> activity.shareAnimatedSticker(asset)
                 MENU_TIKTOK -> activity.shareToHost(asset, Destination.TIKTOK)
                 MENU_ZALO -> activity.shareToHost(asset, Destination.ZALO)
+                MENU_ARCHIVE -> activity.setArchived(asset, archived = !asset.archived)
                 MENU_DELETE -> activity.requestDelete(listOf(asset))
                 else -> return@setOnMenuItemClickListener false
             }
@@ -488,5 +518,6 @@ internal class AssetDetailPanel(
         private const val MENU_TIKTOK = 4
         private const val MENU_ZALO = 5
         private const val MENU_DELETE = 6
+        private const val MENU_ARCHIVE = 7
     }
 }

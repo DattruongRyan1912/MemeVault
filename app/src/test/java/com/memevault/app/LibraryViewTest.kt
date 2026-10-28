@@ -14,6 +14,7 @@ class LibraryViewTest {
         lastUsedAt: Long? = null,
         useCount: Int = 0,
         tags: List<String> = emptyList(),
+        archived: Boolean = false,
     ) = Asset(
         id = id,
         originalPath = "/tmp/$id",
@@ -29,7 +30,34 @@ class LibraryViewTest {
         lastUsedAt = lastUsedAt,
         useCount = useCount,
         tags = tags,
+        archived = archived,
     )
+
+    @Test
+    fun archivedSourcesOnlyShowUnderTheSourcesFilter() {
+        val library = listOf(
+            asset("meme", tags = listOf("dog")),
+            asset("source", archived = true, favorite = true, tags = listOf("dog", "cat")),
+            asset("sticker", type = AssetType.STICKER),
+        )
+        AssetFilter.values().filter { it != AssetFilter.SOURCES }.forEach { filter ->
+            val ids = LibraryView.apply(library, filter, TagScope.Any, LibrarySort.ADDED).map { it.id }
+            assertEquals("filter $filter", false, "source" in ids)
+        }
+        assertEquals(
+            listOf("source"),
+            LibraryView.apply(library, AssetFilter.SOURCES, TagScope.Any, LibrarySort.ADDED).map { it.id },
+        )
+        val counts = LibraryView.countsByFilter(library)
+        assertEquals(2, counts[AssetFilter.ALL])
+        assertEquals(0, counts[AssetFilter.FAVORITES])
+        assertEquals(1, counts[AssetFilter.SOURCES])
+        // Tag collections describe the visible library, so an archived source adds nothing.
+        assertEquals(
+            listOf(LibraryView.tagKey("dog") to 1),
+            LibraryView.topTags(library, limit = 10).map { it.key to it.count },
+        )
+    }
 
     @Test
     fun addedSortKeepsNewImportsFirstEvenWhenOthersWereUsedRecently() {

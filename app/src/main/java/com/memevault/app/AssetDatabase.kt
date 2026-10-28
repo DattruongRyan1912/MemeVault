@@ -52,6 +52,8 @@ data class AssetEntity(
     @ColumnInfo(name = "last_used_at") val lastUsedAt: Long?,
     @ColumnInfo(name = "use_count") val useCount: Int,
     @ColumnInfo(name = "source_asset_id") val sourceAssetId: String?,
+    /** Kept out of the library grid and keyboard; shown only under "Ảnh nguồn". */
+    val archived: Boolean,
 )
 
 @Entity(
@@ -217,6 +219,9 @@ interface AssetDao {
 
     @Query("UPDATE assets SET favorite = :favorite WHERE id = :id")
     fun setFavorite(id: String, favorite: Boolean): Int
+
+    @Query("UPDATE assets SET archived = :archived WHERE id = :id")
+    fun setArchived(id: String, archived: Boolean): Int
 
     @Query("UPDATE assets SET display_name = :displayName WHERE id = :id")
     fun rename(id: String, displayName: String): Int
@@ -466,7 +471,7 @@ interface AssetDao {
         AssetTagCrossRef::class,
         StickerRecipeEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class MemeVaultDatabase : RoomDatabase() {
@@ -479,7 +484,7 @@ class AssetDatabase(context: Context) : AutoCloseable {
         MemeVaultDatabase::class.java,
         "memevault.db",
     )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
         .build()
     private val dao = database.assetDao()
     @Volatile
@@ -537,16 +542,21 @@ class AssetDatabase(context: Context) : AutoCloseable {
         val assets = dao.listAssets(favoriteOnly, type, escapedSearch, escapedTagSearch).map { entity ->
             entity.toDomain(dao.tagsForAsset(entity.id))
         }
-        return if (filter == AssetFilter.ANIMATED) {
-            assets.filter(Asset::isAnimatedMedia)
-        } else {
-            assets
+        return when (filter) {
+            AssetFilter.ANIMATED -> assets.filter(Asset::isAnimatedMedia)
+            AssetFilter.SOURCES -> assets.filter(Asset::archived)
+            else -> assets
         }
     }
 
     fun setFavorite(id: String, favorite: Boolean): Boolean {
         ensureTagsCanonical()
         return dao.setFavorite(id, favorite) == 1
+    }
+
+    fun setArchived(id: String, archived: Boolean): Boolean {
+        ensureTagsCanonical()
+        return dao.setArchived(id, archived) == 1
     }
 
     fun rename(id: String, displayName: String): Boolean {
@@ -686,6 +696,7 @@ class AssetDatabase(context: Context) : AutoCloseable {
         lastUsedAt = lastUsedAt,
         useCount = useCount,
         sourceAssetId = sourceAssetId,
+        archived = archived,
     )
 
     private fun StickerRecipe.toEntity() = StickerRecipeEntity(
@@ -734,6 +745,7 @@ class AssetDatabase(context: Context) : AutoCloseable {
         tags = tags,
         sourceAssetId = sourceAssetId,
         dedupKey = dedupKey,
+        archived = archived,
     )
 
     private fun StickerRecipeEntity.toDomain(sourceAssetId: String?): StickerRecipe = StickerRecipe(
@@ -835,6 +847,12 @@ class AssetDatabase(context: Context) : AutoCloseable {
                 db.execSQL("ALTER TABLE sticker_recipes ADD COLUMN crop_bottom INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE sticker_recipes ADD COLUMN crop_source_width INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE sticker_recipes ADD COLUMN crop_source_height INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE assets ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

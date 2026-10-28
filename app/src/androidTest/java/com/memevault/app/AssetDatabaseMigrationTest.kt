@@ -13,7 +13,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Verifies that an installed v1 library can open with the v3 recipe/lineage/crop schema. */
+/** Verifies that an installed v1 library can open with the v4 recipe/lineage/crop/archive schema. */
 @RunWith(AndroidJUnit4::class)
 class AssetDatabaseMigrationTest {
     @get:Rule
@@ -25,7 +25,7 @@ class AssetDatabaseMigrationTest {
     )
 
     @Test
-    fun migrateV1ToV3() {
+    fun migrateV1ToV4() {
         val v1 = helper.createDatabase(TEST_DB, 1)
         v1.execSQL(
             """
@@ -84,10 +84,11 @@ class AssetDatabaseMigrationTest {
 
         val migrated = helper.runMigrationsAndValidate(
             TEST_DB,
-            3,
+            4,
             true,
             AssetDatabase.MIGRATION_1_2,
             AssetDatabase.MIGRATION_2_3,
+            AssetDatabase.MIGRATION_3_4,
         )
         try {
             val dedup = migrated.query("SELECT dedup_key FROM assets WHERE id = 'source'")
@@ -101,7 +102,7 @@ class AssetDatabaseMigrationTest {
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.databaseBuilder(context, MemeVaultDatabase::class.java, TEST_DB)
-            .addMigrations(AssetDatabase.MIGRATION_1_2, AssetDatabase.MIGRATION_2_3)
+            .addMigrations(AssetDatabase.MIGRATION_1_2, AssetDatabase.MIGRATION_2_3, AssetDatabase.MIGRATION_3_4)
             .build()
         try {
             database.assetDao().normalizeLegacyTags()
@@ -283,8 +284,58 @@ class AssetDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrateV3ToV4KeepsEveryRowInTheLibrary() {
+        val v3 = helper.createDatabase(TEST_DB_V3, 3)
+        v3.execSQL(
+            """
+            INSERT INTO assets(
+                id, original_path, mime_type, display_name, type, content_hash,
+                width, height, duration_ms, favorite, created_at, last_used_at, use_count,
+                source_asset_id, dedup_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+            arrayOf<Any?>(
+                "v3-source",
+                "/data/user/0/test/files/media/originals/v3-source.jpg",
+                "image/jpeg",
+                "v3-source.jpg",
+                "MEME",
+                "v3-source-hash",
+                320,
+                320,
+                0L,
+                1,
+                1_000L,
+                null,
+                0,
+                null,
+                "v3-source-hash",
+            ),
+        )
+        v3.close()
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB_V3, 4, true, AssetDatabase.MIGRATION_3_4)
+        try {
+            // Existing sources stay visible: archiving is always an explicit user choice.
+            migrated.query("SELECT archived, favorite FROM assets WHERE id = 'v3-source'").use {
+                assertTrue(it.moveToFirst())
+                assertEquals(0, it.getInt(0))
+                assertEquals(1, it.getInt(1))
+            }
+            migrated.execSQL("UPDATE assets SET archived = 1 WHERE id = 'v3-source'")
+            migrated.query("SELECT archived FROM assets WHERE id = 'v3-source'").use {
+                assertTrue(it.moveToFirst())
+                assertEquals(1, it.getInt(0))
+            }
+        } finally {
+            migrated.close()
+        }
+    }
+
     companion object {
         private const val TEST_DB = "memevault-migration-test"
         private const val TEST_DB_V2 = "memevault-migration-v2-v3-test"
+        private const val TEST_DB_V3 = "memevault-migration-v3-v4-test"
     }
 }

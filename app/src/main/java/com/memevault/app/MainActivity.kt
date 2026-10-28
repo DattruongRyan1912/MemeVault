@@ -200,6 +200,8 @@ class MainActivity : Activity() {
                 applyView(scrollToTop = true)
             }
             typeChips[option] = chip
+            // Stays hidden until the first render finds an archived source.
+            if (option == LibraryTypeFilter.SOURCES) chip.visibility = View.GONE
             typeRow.addView(chip, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 dp(MV_TOUCH),
@@ -513,11 +515,15 @@ class MainActivity : Activity() {
         if (tagScope is TagScope.Tag && allAssets.none { LibraryView.matches(it, tagScope) }) {
             tagScope = TagScope.Any
         }
+        // The "Ảnh nguồn" chip hides once its last item is restored or deleted.
+        if (typeFilter == LibraryTypeFilter.SOURCES && allAssets.none { it.archived && it.id !in pendingDeletion }) {
+            typeFilter = LibraryTypeFilter.ALL
+        }
         val visible = LibraryView.apply(allAssets, typeFilter.filter, tagScope, sort, pendingDeletion)
         adapter.submitList(visible) {
             if (scrollToTop) recycler.scrollToPosition(0)
         }
-        val total = allAssets.count { it.id !in pendingDeletion }
+        val total = allAssets.count { LibraryView.inLibrary(it, pendingDeletion) }
         val hasQuery = search.text?.isNotBlank() == true
         val narrowed = hasQuery || typeFilter != LibraryTypeFilter.ALL || tagScope != TagScope.Any
         countLabel.text = when {
@@ -560,6 +566,11 @@ class MainActivity : Activity() {
         typeChips.forEach { (option, chip) ->
             val selected = option == typeFilter
             val count = counts[option.filter] ?: 0
+            chip.visibility = if (option == LibraryTypeFilter.SOURCES && count == 0 && !selected) {
+                View.GONE
+            } else {
+                View.VISIBLE
+            }
             chip.text = labelWithCount(option.label, count, selected)
             chip.styleMvChip(selected)
             chip.contentDescription = "${option.label}, $count mục" + if (selected) ", đang lọc" else ""
@@ -573,7 +584,7 @@ class MainActivity : Activity() {
         if (scope is TagScope.Tag && tags.none { it.key == scope.key }) {
             tags.add(0, TagCount(scope.key, scope.label, allAssets.count { LibraryView.matches(it, scope) }))
         }
-        val untagged = allAssets.count { it.id !in pendingDeletion && it.tags.isEmpty() }
+        val untagged = allAssets.count { LibraryView.inLibrary(it, pendingDeletion) && it.tags.isEmpty() }
         tagScroll.visibility = if (tags.isEmpty() && untagged == 0) View.GONE else View.VISIBLE
         tagRow.addView(ImageView(this).apply {
             setMvIcon(R.drawable.ic_label, mvMuted)
@@ -933,6 +944,26 @@ class MainActivity : Activity() {
         applyView()
     }
 
+    /** Parks an image under "Ảnh nguồn" (hidden from the grid and keyboard) or brings it back. */
+    internal fun setArchived(asset: Asset, archived: Boolean) {
+        runDb {
+            val updated = repository.setArchived(asset.id, archived)
+            runOnUi {
+                if (updated == null) {
+                    showMessage(getString(R.string.archive_failed))
+                    return@runOnUi
+                }
+                onAssetChanged(updated)
+                snackbar.show(
+                    text = getString(if (archived) R.string.archived_to_sources else R.string.restored_from_sources),
+                    actionLabel = "Hoàn tác",
+                    durationMs = 5_000L,
+                    onAction = { setArchived(updated, !archived) },
+                )
+            }
+        }
+    }
+
     internal fun topTags(limit: Int): List<TagCount> = LibraryView.topTags(allAssets, limit, pendingDeletion)
 
     private fun openSheet(next: MvSheet) {
@@ -1153,6 +1184,7 @@ class MainActivity : Activity() {
                                 saved = if (outcome.duplicate) 0 else 1,
                                 duplicate = if (outcome.duplicate) 1 else 0,
                                 errors = 0,
+                                restored = if (outcome.unarchived) 1 else 0,
                             )
                         } else {
                             action.isEnabled = true
@@ -1211,15 +1243,18 @@ class MainActivity : Activity() {
                     saved = outcomes.count { it.asset != null && !it.duplicate },
                     duplicate = outcomes.count { it.duplicate },
                     errors = outcomes.count { it.error != null },
+                    restored = outcomes.count { it.unarchived },
                 )
             }
         }
     }
 
-    private fun showImportResult(saved: Int, duplicate: Int, errors: Int) {
+    private fun showImportResult(saved: Int, duplicate: Int, errors: Int, restored: Int = 0) {
         val message = buildString {
             append("Đã thêm $saved")
             if (duplicate > 0) append(" · trùng $duplicate")
+            // A duplicate that was parked under "Ảnh nguồn" is back in the grid; say where it went.
+            if (restored > 0) append(" · đưa $restored mục từ Ảnh nguồn về thư viện")
             if (errors > 0) append(" · lỗi $errors")
         }
         if (saved > 0) {

@@ -143,6 +143,12 @@ and record their own MIME type, path, size, and generation profile.
   host exports (TikTok/Zalo/animated sticker) are grouped under "Xuất nâng cao (thử nghiệm)".
   The Tenor/Giphy link importer (user-pasted URLs only, host allowlist, no crawling) is the only
   network path and requires the `INTERNET` permission.
+- Sticker sources and refine (0.1.21, Room v4): `assets.archived` parks a source under the
+  "Ảnh nguồn" chip, hidden from the grid, tag strip and keyboard. Studio applies a remembered
+  Keep/Archive/Delete choice to the source only after a successful save; Delete is limited to an
+  image imported for this sticker that nothing else derives from (`StickerSourcePolicy`). The
+  full-screen Keep/Erase brush (`MaskBrushSession` + `MaskEditorView`) edits a gray8 copy of the
+  mask with byte-capped dirty-rect undo; edits are saved into the recipe mask.
 
 ## Planned next direction
 
@@ -151,5 +157,6 @@ removal engine, Room V2 recipe/mask/job model, quality gates, and phased deliver
 personal-production gates, device matrix, local release and rollback checklist are tracked in
 `docs/production-roadmap.md`. The UI information architecture, component contract, screen states
 and redesign sequence are tracked in `docs/ui-redesign-plan.md`. The current quick static-image
-slice plus storage-first recipe/mask/tag foundation and personal release signing are implemented;
-brush editing and real-device quality verification remain pending.
+slice plus storage-first recipe/mask/tag foundation, personal release signing and Keep/Erase brush
+refine (0.1.21) are implemented; per-subject selection and real-device quality verification remain
+pending.

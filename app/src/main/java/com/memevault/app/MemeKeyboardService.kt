@@ -95,7 +95,8 @@ class MemeKeyboardService : InputMethodService() {
     private fun loadAssets(root: LinearLayout) {
         val currentRepository = repository ?: return
         executor.execute {
-            val assets = runCatching { currentRepository.list() }.getOrDefault(emptyList())
+            // Archived sticker sources live under "Ảnh nguồn" in the app only.
+            val assets = runCatching { currentRepository.list().filterNot(Asset::archived) }.getOrDefault(emptyList())
             mainHandler.post {
                 if (inputRoot !== root) return@post
                 allAssets = assets

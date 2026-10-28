@@ -37,6 +37,8 @@ enum class AssetFilter {
     STICKERS,
     MEMES,
     VIDEOS,
+    /** Archived sticker sources; every other filter excludes them. */
+    SOURCES,
 }
 
 enum class TagSource {
@@ -248,6 +250,8 @@ data class Asset(
     val tags: List<String>,
     val sourceAssetId: String? = null,
     val dedupKey: String = hash,
+    /** Parked under "Ảnh nguồn": hidden from the library grid and the keyboard. */
+    val archived: Boolean = false,
 )
 
 /**
@@ -265,6 +269,8 @@ data class ImportOutcome(
     val asset: Asset? = null,
     val duplicate: Boolean = false,
     val error: String? = null,
+    /** The duplicate was archived under "Ảnh nguồn" and this import moved it back. */
+    val unarchived: Boolean = false,
 )
 
 data class SharedAsset(
